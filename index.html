@@ -359,30 +359,34 @@ function renderEdit(el){
   h+='<button class="glass-btn" style="width:auto;padding:8px 14px;font-size:13px" onclick="window._go(\'home\')">← Retour</button>';
   h+='<span style="font-size:15px;font-weight:700;background:linear-gradient(135deg,#fdba74,#f43f5e);-webkit-background-clip:text;-webkit-text-fill-color:transparent">Positionner</span>';
   h+='<div style="width:70px"></div></div>';
-  h+='<div class="scr" style="padding:16px">';
-  h+='<div class="glass" style="overflow:hidden;padding:0"><div id="ic" style="position:relative;touch-action:none;user-select:none;-webkit-user-select:none">';
-  h+='<img id="ei" src="'+img+'" style="width:100%;display:block;pointer-events:none" draggable="false">';
+
+  h+='<div class="scr" style="padding:12px">';
+  // Image constrained to max 55vh so controls stay visible
+  h+='<div class="glass" style="overflow:hidden;padding:0"><div id="ic" style="position:relative;touch-action:none;user-select:none;-webkit-user-select:none;max-height:55vh">';
+  h+='<img id="ei" src="'+img+'" style="width:100%;max-height:55vh;display:block;pointer-events:none;object-fit:contain" draggable="false">';
   h+='<div id="sd" style="position:absolute;left:'+sp.x+'%;top:'+sp.y+'%;transform:translate(-50%,-50%) scale('+S.scale+');cursor:grab;z-index:10;transform-origin:center center">'+shtml(true)+'</div>';
   h+='</div></div>';
-  h+='<p class="pinch-hint">☝️ Glissez pour déplacer · 🤏 Pincez pour redimensionner</p>';
+  h+='<p class="pinch-hint">☝️ Glissez · 🤏 Pincez</p>';
 
-  // Rotation slider
-  h+='<div class="glass" style="padding:14px;margin-top:12px"><div class="lbl">🔄 Rotation du tampon</div>';
-  h+='<div style="display:flex;align-items:center;gap:10px">';
-  h+='<span style="font-size:12px;opacity:.5;min-width:36px">'+S.rotation+'°</span>';
+  // Compact controls row
+  h+='<div style="display:flex;gap:8px;margin-top:10px">';
+  // Rotation
+  h+='<div class="glass" style="padding:10px 12px;flex:1;display:flex;align-items:center;gap:6px">';
+  h+='<span style="font-size:14px">🔄</span>';
   h+='<input type="range" min="-180" max="180" step="1" value="'+S.rotation+'" oninput="window._rot(this.value)" style="flex:1">';
-  h+='<button class="sec-btn" style="width:auto;padding:6px 12px;font-size:11px" onclick="window._rot(0)">Reset</button>';
-  h+='</div></div>';
-
-  // Date du ticket
-  h+='<div class="glass" style="padding:14px;margin-top:10px"><div class="lbl">📅 Date du ticket (nom du fichier)</div>';
-  h+='<div style="display:flex;gap:10px;align-items:center">';
-  h+='<input id="ndfDateIn" type="date" value="'+(ndfDate||"")+'" onchange="window._setDate(this.value)" style="flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:10px;color:#f0f0f0;padding:10px 12px;font-size:14px;font-family:Outfit,sans-serif;outline:none;color-scheme:dark">';
-  h+='<span style="font-size:11px;color:rgba(255,255,255,.35);min-width:90px">'+fname()+'</span>';
-  h+='</div></div>';
+  h+='<span style="font-size:10px;opacity:.5;min-width:28px">'+S.rotation+'°</span>';
+  h+='</div>';
+  // Date
+  h+='<div class="glass" style="padding:10px 12px;flex:1;display:flex;align-items:center;gap:6px">';
+  h+='<span style="font-size:14px">📅</span>';
+  h+='<input id="ndfDateIn" type="date" value="'+(ndfDate||"")+'" onchange="window._setDate(this.value)" style="flex:1;background:transparent;border:none;color:#f0f0f0;font-size:12px;font-family:Outfit,sans-serif;outline:none;color-scheme:dark;min-width:0">';
+  h+='</div>';
+  h+='</div>';
 
   h+='</div>';
-  h+='<div style="padding:12px 20px 28px;border-top:1px solid rgba(255,255,255,.06);background:rgba(17,10,4,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);display:flex;flex-direction:column;gap:10px">';
+
+  // Fixed save button
+  h+='<div style="padding:10px 16px 24px;border-top:1px solid rgba(255,255,255,.06);background:rgba(17,10,4,.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0">';
   h+='<button id="dlb" class="primary-btn" onclick="window._gen()">💾 Sauvegarder l\'image</button>';
   h+='</div>';
   el.innerHTML=h;
