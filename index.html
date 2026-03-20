@@ -220,20 +220,27 @@ function renderCrop(el){
   h+='<span class="htitle">Recadrer</span>';
   h+='<button class="glass-btn" style="width:auto;padding:8px 14px;font-size:13px;background:rgba(249,115,22,.2);border-color:rgba(249,115,22,.3)" onclick="window._applyCrop()">Valider ✓</button>';
   h+='</div>';
-  h+='<div class="scr" style="padding:16px;display:flex;flex-direction:column;align-items:center;justify-content:center">';
-  // Auto-straighten button
-  h+='<div style="display:flex;gap:10px;margin-bottom:12px;width:100%">';
-  h+='<button class="sec-btn" onclick="window._autoStraighten()" style="flex:1">📐 Redresser auto</button>';
-  h+='<div class="glass" style="padding:8px 14px;display:flex;align-items:center;gap:8px;border-radius:14px;flex:1">';
-  h+='<span style="font-size:12px;color:rgba(255,255,255,.5);white-space:nowrap" id="straightAngle">0°</span>';
-  h+='<input type="range" min="-15" max="15" step="0.5" value="0" id="straightSlider" oninput="window._manualStraighten(this.value)" style="flex:1">';
-  h+='</div></div>';
-  h+='<div id="cropBox" style="position:relative;display:inline-block;max-width:100%">';
+  h+='<div class="scr" style="padding:16px;display:flex;flex-direction:column">';
+
+  // Image + crop zone
+  h+='<div id="cropBox" style="position:relative;display:block;width:100%;flex-shrink:0">';
   h+='<img id="cropImg" src="'+imgFull+'" style="width:100%;display:block;border-radius:12px" draggable="false">';
-  // Dim overlays + handles drawn by JS
   h+='<div id="cropOverlay" style="position:absolute;inset:0"></div>';
   h+='</div>';
-  h+='<p style="font-size:12px;color:rgba(255,255,255,.35);margin-top:16px;text-align:center">Déplacez les poignées pour recadrer</p>';
+  h+='<p style="font-size:12px;color:rgba(255,255,255,.35);margin-top:10px;text-align:center">Déplacez les poignées pour recadrer</p>';
+
+  // Tools below image
+  h+='<div style="display:flex;gap:8px;margin-top:14px;width:100%">';
+  h+='<button class="sec-btn" onclick="window._autoStraighten()" style="flex:1;padding:12px 8px;font-size:12px">📐 Redresser</button>';
+  h+='<button class="sec-btn" onclick="window._rotate90()" style="flex:0 0 auto;padding:12px 16px;font-size:16px">↻</button>';
+  h+='</div>';
+
+  // Manual straighten slider
+  h+='<div class="glass" style="padding:10px 14px;margin-top:10px;display:flex;align-items:center;gap:8px;border-radius:14px">';
+  h+='<span style="font-size:11px;color:rgba(255,255,255,.5);white-space:nowrap" id="straightAngle">0°</span>';
+  h+='<input type="range" min="-15" max="15" step="0.5" value="0" id="straightSlider" oninput="window._manualStraighten(this.value)" style="flex:1">';
+  h+='</div>';
+
   h+='</div>';
   el.innerHTML=h;
   setTimeout(setupCrop,50);
@@ -524,6 +531,20 @@ window._manualStraighten=function(v){
   var label=document.getElementById("straightAngle");
   if(label)label.textContent=angle+"°";
   applyImageRotation(angle);
+};
+window._rotate90=function(){
+  var im=new Image();
+  im.onload=function(){
+    var cv2=document.getElementById("cv2"),cx=cv2.getContext("2d");
+    cv2.width=im.height;cv2.height=im.width;
+    cx.translate(im.height,0);cx.rotate(Math.PI/2);
+    cx.drawImage(im,0,0);
+    imgFull=cv2.toDataURL("image/png");
+    crop={x1:5,y1:5,x2:95,y2:95};
+    scr="crop";render();
+    toast("Rotation 90° ✓");
+  };
+  im.src=imgFull;
 };
 function applyImageRotation(angle){
   var im=new Image();
