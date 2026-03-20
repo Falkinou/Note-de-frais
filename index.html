@@ -501,7 +501,6 @@ window._gen=function(){
       var fn=fname();
       function done(m,ok){
         if(ok){incCount();if(navigator.vibrate)navigator.vibrate([20,50,20]);showSuccess();
-          // Show back to menu button
           setTimeout(function(){
             var bar=document.getElementById("dlb");
             if(bar&&bar.parentNode){
@@ -516,11 +515,48 @@ window._gen=function(){
         }
         if(btn){btn.disabled=false;btn.textContent="💾 Sauvegarder l'image"}toast(m);
       }
-      if(navigator.share&&navigator.canShare){
-        var file=new File([blob],fn,{type:"image/png"});
-        if(navigator.canShare({files:[file]})){navigator.share({files:[file]}).then(function(){done(fn+" partagé ✓",true)}).catch(function(e){if(e.name!=="AbortError")done("Partage annulé",false);else{if(btn){btn.disabled=false;btn.textContent="💾 Sauvegarder l'image"}}});return}
+
+      function fallbackDownload(){
+        try{
+          var url=URL.createObjectURL(blob);
+          var a=document.createElement("a");
+          a.href=url;a.download=fn;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(function(){URL.revokeObjectURL(url)},5000);
+          done(fn+" sauvegardé ✓",true);
+        }catch(e2){
+          // Last resort: open blob as image in new tab
+          try{
+            var reader=new FileReader();
+            reader.onload=function(){
+              var w=window.open("");
+              if(w){w.document.write("<img src=\""+reader.result+"\" style=\"max-width:100%\"><p>Appuyez longuement sur l\'image pour la sauvegarder</p>");
+                done("Appuyez longuement sur l'image pour sauvegarder",true);
+              }else{done("Popup bloquée — autorisez les popups",false)}
+            };
+            reader.readAsDataURL(blob);
+          }catch(e3){done("Erreur de sauvegarde",false)}
+        }
       }
-      var url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=fn;a.click();URL.revokeObjectURL(url);done(fn+" sauvegardé ✓",true);
+
+      // Try navigator.share first (iOS Safari, some Android)
+      try{
+        if(navigator.share&&navigator.canShare){
+          var file=new File([blob],fn,{type:"image/png"});
+          if(navigator.canShare({files:[file]})){
+            navigator.share({files:[file]}).then(function(){
+              done(fn+" partagé ✓",true);
+            }).catch(function(e){
+              if(e.name==="AbortError"){if(btn){btn.disabled=false;btn.textContent="💾 Sauvegarder l'image"}}
+              else{fallbackDownload()}
+            });
+            return;
+          }
+        }
+      }catch(e){}
+      fallbackDownload();
     },"image/png");
   };
   im.src=img;
