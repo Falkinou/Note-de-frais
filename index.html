@@ -266,9 +266,7 @@ function renderStamp(el){
 // ── CROP ──
 function renderCrop(el){
   var h='<div class="hdr">';
-  h+='<button class="glass-btn" style="width:auto;padding:8px 14px;font-size:13px" onclick="window._go(\'home\')">← Annuler</button>';
   h+='<span class="htitle">Recadrer</span>';
-  h+='<button class="glass-btn" style="width:auto;padding:8px 14px;font-size:13px;background:rgba(249,115,22,.2);border-color:rgba(249,115,22,.3)" onclick="window._applyCrop()">Valider ✓</button>';
   h+='</div>';
   h+='<div class="scr" style="padding:16px;display:flex;flex-direction:column">';
 
@@ -279,12 +277,16 @@ function renderCrop(el){
   h+='</div>';
   h+='<p style="font-size:12px;color:rgba(255,255,255,.35);margin-top:10px;text-align:center">Déplacez les poignées pour recadrer</p>';
 
-  // Tools below image
-  h+='<div style="display:flex;gap:8px;margin-top:14px;width:100%">';
-  h+='<button class="sec-btn" onclick="window._rotate90()" style="flex:1;padding:12px 8px;font-size:13px">↻ Rotation 90°</button>';
   h+='</div>';
 
-  h+='</div>';
+  // Bottom bar with all actions
+  h+='<div style="padding:12px 20px 28px;border-top:1px solid rgba(255,255,255,.06);background:rgba(17,10,4,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)">';
+  h+='<div style="display:flex;gap:8px">';
+  h+='<button class="sec-btn" onclick="window._go(\'home\')" style="flex:0 0 auto;padding:12px 14px;font-size:13px">←</button>';
+  h+='<button class="sec-btn" onclick="window._rotate90()" style="flex:1;padding:12px 8px;font-size:13px">↻ 90°</button>';
+  h+='<button class="primary-btn" onclick="window._applyCrop()" style="flex:1;padding:12px 8px;font-size:14px">Valider ✓</button>';
+  h+='</div></div>';
+
   el.innerHTML=h;
   setTimeout(setupCrop,50);
 }
@@ -497,7 +499,20 @@ window._gen=function(){
     cv.toBlob(function(blob){
       var fn=fname();
       function done(m,ok){
-        if(ok){incCount();if(navigator.vibrate)navigator.vibrate([20,50,20]);showSuccess()}
+        if(ok){incCount();if(navigator.vibrate)navigator.vibrate([20,50,20]);showSuccess();
+          // Show back to menu button
+          setTimeout(function(){
+            var bar=document.getElementById("dlb");
+            if(bar&&bar.parentNode){
+              var bk=document.createElement("button");
+              bk.className="sec-btn";
+              bk.style.cssText="margin-top:8px;padding:14px";
+              bk.innerHTML="🏠 Retour au menu";
+              bk.onclick=function(){scr="home";render()};
+              bar.parentNode.appendChild(bk);
+            }
+          },400);
+        }
         if(btn){btn.disabled=false;btn.textContent="💾 Sauvegarder l'image"}toast(m);
       }
       if(navigator.share&&navigator.canShare){
