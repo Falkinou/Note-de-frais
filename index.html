@@ -292,7 +292,7 @@ function renderHome(el){
   h+='</div>';
 
   // Copyright
-  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.0.2</p></div>';
+  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.0.3</p></div>';
 
   h+='<div class="blob1"></div><div class="blob2"></div><div class="blob3"></div>';
   el.innerHTML=h;
@@ -739,7 +739,7 @@ window._genPDF=function(){
     var pdfBlob=new Blob([pdfBuf],{type:"application/pdf"});
     var pdfName=fname().replace(".png",".pdf");
 
-    function donePDF(m){if(btn2){btn2.disabled=false;btn2.textContent="📄 Exporter en PDF"}toast(m)}
+    function donePDF(m,ok){if(ok){incCount();showSuccess()}if(btn2){btn2.disabled=false;btn2.textContent="📄 Exporter en PDF"}if(m)toast(m)}
 
     function fallbackPDF(){
       try{
@@ -747,14 +747,14 @@ window._genPDF=function(){
         var a=document.createElement("a");a.href=url;a.download=pdfName;
         document.body.appendChild(a);a.click();document.body.removeChild(a);
         setTimeout(function(){URL.revokeObjectURL(url)},5000);
-        donePDF(pdfName+" sauvegardé ✓");
+        donePDF(pdfName+" sauvegardé ✓",true);
       }catch(e){
         // Last resort: open PDF in new tab
         try{
           var url2=URL.createObjectURL(pdfBlob);
           window.open(url2,"_blank");
-          donePDF("PDF ouvert — sauvegardez depuis le navigateur");
-        }catch(e2){donePDF("Erreur PDF")}
+          donePDF("PDF ouvert — sauvegardez depuis le navigateur",true);
+        }catch(e2){donePDF("Erreur PDF",false)}
       }
     }
 
@@ -764,9 +764,9 @@ window._genPDF=function(){
         var pdfFile=new File([pdfBlob],pdfName,{type:"application/pdf"});
         if(navigator.canShare({files:[pdfFile]})){
           navigator.share({files:[pdfFile]}).then(function(){
-            donePDF(pdfName+" partagé ✓");
+            donePDF(pdfName+" partagé ✓",true);
           }).catch(function(e){
-            if(e.name==="AbortError"){donePDF("")}
+            if(e.name==="AbortError"){donePDF("",false)}
             else{fallbackPDF()}
           });
           return;
