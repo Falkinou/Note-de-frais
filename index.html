@@ -104,7 +104,7 @@ var TC=[
   {n:"Ambre",v:"#fbbf24"},{n:"Fuchsia",v:"#e879f9"},
   {n:"Rouge",v:"#ef4444"},{n:"Vert",v:"#4ade80"}
 ];
-var DS={address:"Orange SA\n111, Quai du Pr\u00e9sident Roosevelt,\n92130 Issy Les Moulineaux",colorIdx:0,scale:1,showDate:true,shape:"rect",noBg:true,textColor:"#111111",bold:true,vintage:true,rotation:0};
+var DS={address:"Orange SA\n111, Quai du Pr\u00e9sident Roosevelt,\n92130 Issy Les Moulineaux",colorIdx:0,scale:1,showDate:false,shape:"rect",noBg:true,textColor:"#111111",bold:true,vintage:true,rotation:0};
 
 var S,scr="home",img=null,imgFull=null,sp={x:60,y:70},drag=false,doff={x:0,y:0},tt;
 var pinchStartDist=0,pinchStartScale=1;
@@ -112,24 +112,90 @@ var crop={x1:10,y1:10,x2:90,y2:90},cropDrag=null,cropOff={x:0,y:0};
 var stampCount=0;
 var ndfDate="";
 
-try{var r=localStorage.getItem("ndf_stamp_v7");S=r?Object.assign({},DS,JSON.parse(r)):Object.assign({},DS)}catch(e){S=Object.assign({},DS)}
+try{var r=localStorage.getItem("ndf_stamp_v8");S=r?Object.assign({},DS,JSON.parse(r)):Object.assign({},DS)}catch(e){S=Object.assign({},DS)}
 try{stampCount=parseInt(localStorage.getItem("ndf_count"))||0}catch(e){}
 try{var lp=JSON.parse(localStorage.getItem("ndf_lastpos"));if(lp&&lp.x)sp=lp}catch(e){}
 var globalCount=0;
+var GLOBAL_OFFSET=11; // notes tamponnées avant le nouveau compteur
 
 function incCount(){
   stampCount++;try{localStorage.setItem("ndf_count",String(stampCount))}catch(e){}
-  // Increment global counter (fire and forget)
-  try{fetch("https://abacus.jasoncameron.dev/hit/falkinou-ndf/stamps").then(function(r){return r.json()}).then(function(d){if(d&&d.value)globalCount=d.value}).catch(function(){})}catch(e){}
+  // Increment global counter - try multiple APIs
+  hitGlobal();
+}
+function hitGlobal(){
+  // Try counterapi.com first
+  try{fetch("https://counterapi.com/api/falkinou-ndf/stamps/up",{method:"GET"}).then(function(r){return r.json()}).then(function(d){if(d&&d.count)globalCount=d.count}).catch(function(){
+    // Fallback: api.countapi.xyz
+    try{fetch("https://api.countapi.xyz/hit/falkinou-ndf/stamps").then(function(r2){return r2.json()}).then(function(d2){if(d2&&d2.value)globalCount=d2.value}).catch(function(){})}catch(e){}
+  })}catch(e){}
 }
 function fetchGlobalCount(){
-  try{fetch("https://abacus.jasoncameron.dev/get/falkinou-ndf/stamps").then(function(r){return r.json()}).then(function(d){
-    if(d&&d.value){globalCount=d.value;var el=document.getElementById("globalCounter");if(el)el.textContent=globalCount}
-  }).catch(function(){})}catch(e){}
+  // Try counterapi.com first
+  try{fetch("https://counterapi.com/api/falkinou-ndf/stamps/up",{method:"GET"}).then(function(r){return r.json()}).then(function(d){
+    if(d&&d.count){globalCount=d.count;var el=document.getElementById("globalCounter");if(el)el.textContent=globalCount+GLOBAL_OFFSET}
+  }).catch(function(){
+    // Fallback: api.countapi.xyz
+    try{fetch("https://api.countapi.xyz/get/falkinou-ndf/stamps").then(function(r2){return r2.json()}).then(function(d2){
+      if(d2&&d2.value){globalCount=d2.value;var el2=document.getElementById("globalCounter");if(el2)el2.textContent=globalCount+GLOBAL_OFFSET}
+    }).catch(function(){
+      // Last fallback: show local count only
+      var el3=document.getElementById("globalCounter");if(el3)el3.textContent=stampCount>0?stampCount+GLOBAL_OFFSET:GLOBAL_OFFSET;
+    })}catch(e){}
+  })}catch(e){}
 }
 function savePos(){try{localStorage.setItem("ndf_lastpos",JSON.stringify(sp))}catch(e){}}
 
-function save(){try{localStorage.setItem("ndf_stamp_v7",JSON.stringify(S))}catch(e){}}
+// Smart stamp positioning: analyze image to find the emptiest zone
+function findBestPosition(imgSrc,callback){
+  var im2=new Image();
+  im2.onload=function(){
+    var cv2=document.getElementById("cv2"),cx2=cv2.getContext("2d");
+    // Downscale for fast analysis
+    var aw=Math.min(im2.width,200),ah=Math.round(aw*im2.height/im2.width);
+    cv2.width=aw;cv2.height=ah;
+    cx2.drawImage(im2,0,0,aw,ah);
+    var id=cx2.getImageData(0,0,aw,ah),d=id.data;
+
+    // Convert to grayscale
+    var gray=new Float32Array(aw*ah);
+    for(var i=0;i<aw*ah;i++)gray[i]=d[i*4]*0.299+d[i*4+1]*0.587+d[i*4+2]*0.114;
+
+    // Compute variance in blocks (lower variance = emptier area)
+    // Stamp is roughly 40% width, 15% height
+    var bw=Math.round(aw*0.35),bh=Math.round(ah*0.12);
+    var bestX=50,bestY=75,bestScore=Infinity;
+    var stepX=Math.max(2,Math.round(aw/20)),stepY=Math.max(2,Math.round(ah/20));
+
+    for(var by=bh;by<ah-bh;by+=stepY){
+      for(var bx=Math.round(bw/2);bx<aw-Math.round(bw/2);bx+=stepX){
+        var sum=0,sum2=0,count=0;
+        var x0=bx-Math.round(bw/2),y0=by-Math.round(bh/2);
+        for(var yy=y0;yy<y0+bh&&yy<ah;yy++){
+          for(var xx=x0;xx<x0+bw&&xx<aw;xx++){
+            var v=gray[yy*aw+xx];
+            sum+=v;sum2+=v*v;count++;
+          }
+        }
+        if(count<10)continue;
+        var mean=sum/count;
+        var variance=(sum2/count)-(mean*mean);
+
+        // Bonus: prefer bottom half (more natural), avoid very top
+        var yPenalty=by<ah*0.15?500:0;
+        var yBonus=by>ah*0.5?-variance*0.1:0;
+
+        var score=variance+yPenalty+yBonus;
+        if(score<bestScore){bestScore=score;bestX=(bx/aw)*100;bestY=(by/ah)*100}
+      }
+    }
+
+    callback({x:Math.round(bestX),y:Math.round(bestY)});
+  };
+  im2.src=imgSrc;
+}
+
+function save(){try{localStorage.setItem("ndf_stamp_v8",JSON.stringify(S))}catch(e){}}
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
 function dateStr(){return new Date().toLocaleDateString("fr-FR")}
 function fname(){
@@ -215,7 +281,7 @@ function renderHome(el){
   }
   h+='<div class="glass" style="padding:14px;display:flex;align-items:center;justify-content:center;gap:10px">';
   h+='<span style="font-size:18px">🌍</span>';
-  h+='<span style="font-size:13px;font-weight:600;color:rgba(255,255,255,.6)">La communauté a tamponné <span id="globalCounter" style="color:#fbbf24;font-weight:800">'+(globalCount||"...")+'</span> notes de frais</span>';
+  h+='<span style="font-size:13px;font-weight:600;color:rgba(255,255,255,.6)">La communauté a tamponné <span id="globalCounter" style="color:#fbbf24;font-weight:800">'+(globalCount?globalCount+GLOBAL_OFFSET:GLOBAL_OFFSET)+'</span> notes de frais</span>';
   h+='</div>';
   h+='</div>';
 
@@ -226,7 +292,7 @@ function renderHome(el){
   h+='</div>';
 
   // Copyright
-  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold</p></div>';
+  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.0.0</p></div>';
 
   h+='<div class="blob1"></div><div class="blob2"></div><div class="blob3"></div>';
   el.innerHTML=h;
@@ -347,8 +413,11 @@ window._applyCrop=function(){
     var cv2=document.getElementById("cv2");cv2.width=sw;cv2.height=sh;
     var cx=cv2.getContext("2d");cx.drawImage(im,sx,sy,sw,sh,0,0,sw,sh);
     img=cv2.toDataURL("image/png");
-    sp={x:60,y:72};scr="edit";render();
-    toast("Photo recadrée ✓");
+    // Smart positioning: find best empty area
+    findBestPosition(img,function(pos){
+      sp=pos;scr="edit";render();
+      toast("Tampon positionné automatiquement ✓");
+    });
   };
   im.src=imgFull;
 };
@@ -385,9 +454,10 @@ function renderEdit(el){
 
   h+='</div>';
 
-  // Fixed save button
-  h+='<div style="padding:10px 16px 24px;border-top:1px solid rgba(255,255,255,.06);background:rgba(17,10,4,.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0">';
+  // Fixed save buttons
+  h+='<div style="padding:10px 16px 24px;border-top:1px solid rgba(255,255,255,.06);background:rgba(17,10,4,.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0;display:flex;flex-direction:column;gap:8px">';
   h+='<button id="dlb" class="primary-btn" onclick="window._gen()">💾 Sauvegarder l\'image</button>';
+  h+='<button id="dlbpdf" class="sec-btn" onclick="window._genPDF()" style="padding:14px">📄 Exporter en PDF</button>';
   h+='</div>';
   el.innerHTML=h;
   setupDragAndPinch();
@@ -441,6 +511,91 @@ function fileInput(capture){
   setTimeout(function(){i.click()},100);
 }
 
+// ── REALISTIC STAMP RENDERER ──
+function drawStampOnCanvas(cv,cx,imW,imH){
+  var c=SC[S.colorIdx]||SC[0];
+  var lines=S.address.split("\n").filter(Boolean);
+  var ds=S.showDate?dateStr():null;if(ds)lines.push(ds);
+  var sW=imW*0.4*S.scale,lH=sW*0.09,pd=lH*0.9;
+  var sH=S.shape==="circle"?Math.max(sW,lines.length*lH+pd*2):lines.length*lH+pd*2;
+  var sx=(imW*sp.x)/100-sW/2,sy=(imH*sp.y)/100-sH/2;
+  var stampCx=sx+sW/2,stampCy=sy+sH/2;
+
+  // Slight random rotation for hand-stamped feel
+  var inkAngle=S.rotation||0;
+  if(S.vintage)inkAngle+=(Math.random()-0.5)*4;
+
+  cx.save();
+  if(inkAngle){cx.translate(stampCx,stampCy);cx.rotate(inkAngle*Math.PI/180);cx.translate(-stampCx,-stampCy)}
+
+  var inkAlpha=S.vintage?0.72:0.88;
+  cx.globalAlpha=inkAlpha;
+  cx.fillStyle=c.bg;cx.strokeStyle=c.bd;cx.lineWidth=Math.max(3,sW*0.012);
+
+  if(!S.noBg){
+    if(S.shape==="circle"){
+      var ccx2=sx+sW/2,ccy2=sy+sH/2,rr=Math.max(sW,sH)/2;
+      cx.beginPath();cx.arc(ccx2,ccy2,rr,0,Math.PI*2);cx.fill();cx.stroke();
+    }else{
+      var rr2=sW*0.035;cx.beginPath();cx.moveTo(sx+rr2,sy);cx.lineTo(sx+sW-rr2,sy);
+      cx.quadraticCurveTo(sx+sW,sy,sx+sW,sy+rr2);cx.lineTo(sx+sW,sy+sH-rr2);
+      cx.quadraticCurveTo(sx+sW,sy+sH,sx+sW-rr2,sy+sH);cx.lineTo(sx+rr2,sy+sH);
+      cx.quadraticCurveTo(sx,sy+sH,sx,sy+sH-rr2);cx.lineTo(sx,sy+rr2);
+      cx.quadraticCurveTo(sx,sy,sx+rr2,sy);cx.closePath();cx.fill();cx.stroke();
+    }
+    var ib=sW*0.025;
+    cx.strokeStyle=S.vintage?"rgba(255,255,255,.08)":"rgba(255,255,255,.2)";cx.lineWidth=Math.max(1,sW*0.006);
+    if(S.shape==="circle"){cx.beginPath();cx.arc(sx+sW/2,sy+sH/2,Math.max(sW,sH)/2-ib,0,Math.PI*2);cx.stroke()}
+    else{cx.strokeRect(sx+ib,sy+ib,sW-ib*2,sH-ib*2)}
+    if(S.vintage){cx.setLineDash([sW*0.02,sW*0.015]);cx.strokeStyle="rgba(255,255,255,.1)";cx.lineWidth=Math.max(1,sW*0.005);
+      if(S.shape==="circle"){cx.beginPath();cx.arc(sx+sW/2,sy+sH/2,Math.max(sW,sH)/2-ib*2,0,Math.PI*2);cx.stroke()}
+      else{cx.strokeRect(sx+ib*2,sy+ib*2,sW-ib*4,sH-ib*4)}cx.setLineDash([])}
+  }
+
+  // Text with ink variation
+  var tc=S.textColor||c.tx,bw=S.bold?800:400,bw2=S.bold?600:400;
+  cx.fillStyle=tc;cx.textAlign="center";var fs=lH*0.78;
+  for(var i=0;i<lines.length;i++){
+    var isD=ds&&i===lines.length-1;
+    cx.font=isD?"400 "+(fs*0.78)+'px "Helvetica Neue",Arial,sans-serif':(i===0?bw:bw2)+" "+fs+'px "Helvetica Neue",Arial,sans-serif';
+    // Ink pressure per line
+    var lineAlpha=S.vintage?(0.6+Math.random()*0.3):(isD?0.7:1);
+    cx.globalAlpha=lineAlpha;
+    // Slight random offset for hand-stamped feel
+    var offX=S.vintage?(Math.random()-0.5)*sW*0.01:0;
+    var offY=S.vintage?(Math.random()-0.5)*lH*0.08:0;
+    cx.fillText(lines[i],sx+sW/2+offX,sy+pd+(i+0.78)*lH+offY);
+  }
+  cx.restore();
+
+  // Pixel-level ink effects
+  if(S.vintage){
+    var gx=Math.max(0,Math.floor(sx-sW*0.05)),gy=Math.max(0,Math.floor(sy-sH*0.05));
+    var gw=Math.min(Math.ceil(sW*1.1),cv.width-gx),gh=Math.min(Math.ceil(sH*1.1),cv.height-gy);
+    if(gw>0&&gh>0){
+      var id=cx.getImageData(gx,gy,gw,gh);
+      var dd=id.data;
+      for(var k=0;k<dd.length;k+=4){
+        var px=(k/4)%gw,py=Math.floor((k/4)/gw);
+        var dcx2=(px-gw/2)/(gw/2),dcy2=(py-gh/2)/(gh/2);
+        var dist=Math.sqrt(dcx2*dcx2+dcy2*dcy2);
+        // Pressure: darker center, lighter edges
+        var pressureFade=Math.min(1,dist*0.3);
+        // Grain noise
+        var noise=(Math.random()-0.5)*35;
+        // Ink bleed: random spots lose ink
+        var bleed=Math.random()<0.03?-40:0;
+        // Edge fade
+        var edgeFade=dist>0.85?(dist-0.85)*200:0;
+        dd[k]+=noise+bleed;dd[k+1]+=noise+bleed;dd[k+2]+=noise+bleed;
+        dd[k+3]=Math.max(0,dd[k+3]-edgeFade-pressureFade*15);
+      }
+      cx.putImageData(id,gx,gy);
+    }
+  }
+  cx.globalAlpha=1;
+}
+
 // ── GENERATE ──
 window._gen=function(){
   var btn=document.getElementById("dlb");
@@ -449,53 +604,7 @@ window._gen=function(){
   im.onload=function(){
     var cv=document.getElementById("cv"),cx=cv.getContext("2d");
     cv.width=im.width;cv.height=im.height;cx.drawImage(im,0,0);
-    var c=SC[S.colorIdx]||SC[0];
-    var lines=S.address.split("\n").filter(Boolean);
-    var ds=S.showDate?dateStr():null;if(ds)lines.push(ds);
-    var sW=im.width*0.4*S.scale,lH=sW*0.09,pd=lH*0.9;
-    var sH=S.shape==="circle"?Math.max(sW,lines.length*lH+pd*2):lines.length*lH+pd*2;
-    var sx=(im.width*sp.x)/100-sW/2,sy=(im.height*sp.y)/100-sH/2;
-
-    // Draw stamp background
-    cx.save();
-    // Apply rotation around stamp center
-    var stampCx=sx+sW/2,stampCy=sy+sH/2;
-    if(S.rotation){cx.translate(stampCx,stampCy);cx.rotate(S.rotation*Math.PI/180);cx.translate(-stampCx,-stampCy)}
-    if(S.vintage){cx.globalAlpha=0.78}
-    cx.fillStyle=c.bg;cx.strokeStyle=c.bd;cx.lineWidth=Math.max(3,sW*0.012);
-    if(!S.noBg){
-      if(S.shape==="circle"){var ccx2=sx+sW/2,ccy2=sy+sH/2,rr=Math.max(sW,sH)/2;cx.beginPath();cx.arc(ccx2,ccy2,rr,0,Math.PI*2);cx.fill();cx.stroke()}
-      else{var rr2=sW*0.035;cx.beginPath();cx.moveTo(sx+rr2,sy);cx.lineTo(sx+sW-rr2,sy);cx.quadraticCurveTo(sx+sW,sy,sx+sW,sy+rr2);cx.lineTo(sx+sW,sy+sH-rr2);cx.quadraticCurveTo(sx+sW,sy+sH,sx+sW-rr2,sy+sH);cx.lineTo(sx+rr2,sy+sH);cx.quadraticCurveTo(sx,sy+sH,sx,sy+sH-rr2);cx.lineTo(sx,sy+rr2);cx.quadraticCurveTo(sx,sy,sx+rr2,sy);cx.closePath();cx.fill();cx.stroke()}
-      // Inner border
-      var ib=sW*0.025;cx.strokeStyle=S.vintage?"rgba(255,255,255,.1)":"rgba(255,255,255,.2)";cx.lineWidth=Math.max(1,sW*0.006);
-      if(S.shape==="circle"){cx.beginPath();cx.arc(sx+sW/2,sy+sH/2,Math.max(sW,sH)/2-ib,0,Math.PI*2);cx.stroke()}
-      else{cx.strokeRect(sx+ib,sy+ib,sW-ib*2,sH-ib*2)}
-      // Vintage: add dashed inner border
-      if(S.vintage){cx.setLineDash([sW*0.02,sW*0.015]);cx.strokeStyle="rgba(255,255,255,.12)";cx.lineWidth=Math.max(1,sW*0.005);
-        if(S.shape==="circle"){cx.beginPath();cx.arc(sx+sW/2,sy+sH/2,Math.max(sW,sH)/2-ib*2,0,Math.PI*2);cx.stroke()}
-        else{cx.strokeRect(sx+ib*2,sy+ib*2,sW-ib*4,sH-ib*4)}cx.setLineDash([])}
-    }
-    cx.restore();
-
-    // Text
-    var tc=S.textColor||c.tx,bw=S.bold?800:400,bw2=S.bold?600:400;
-    cx.fillStyle=tc;cx.textAlign="center";var fs=lH*0.78;
-    if(S.vintage)cx.globalAlpha=0.82;
-    for(var i=0;i<lines.length;i++){
-      var isD=ds&&i===lines.length-1;
-      cx.font=isD?"400 "+(fs*0.78)+'px "Helvetica Neue",Arial,sans-serif':(i===0?bw:bw2)+" "+fs+'px "Helvetica Neue",Arial,sans-serif';
-      if(isD)cx.globalAlpha=S.vintage?0.55:0.7;
-      cx.fillText(lines[i],sx+sW/2,sy+pd+(i+0.78)*lH);
-      if(isD)cx.globalAlpha=S.vintage?0.82:1;
-    }
-    // Vintage noise overlay on stamp area
-    if(S.vintage&&!S.noBg){
-      var id=cx.getImageData(Math.max(0,Math.floor(sx)),Math.max(0,Math.floor(sy)),Math.min(Math.ceil(sW),cv.width-Math.floor(sx)),Math.min(Math.ceil(sH),cv.height-Math.floor(sy)));
-      var d=id.data;
-      for(var k=0;k<d.length;k+=4){var n=(Math.random()-0.5)*30;d[k]+=n;d[k+1]+=n;d[k+2]+=n}
-      cx.putImageData(id,Math.max(0,Math.floor(sx)),Math.max(0,Math.floor(sy)));
-    }
-    cx.globalAlpha=1;
+    drawStampOnCanvas(cv,cx,im.width,im.height);
 
     cv.toBlob(function(blob){
       var fn=fname();
@@ -504,12 +613,20 @@ window._gen=function(){
           setTimeout(function(){
             var bar=document.getElementById("dlb");
             if(bar&&bar.parentNode){
+              var wrap=document.createElement("div");
+              wrap.style.cssText="display:flex;gap:8px;margin-top:8px";
               var bk=document.createElement("button");
               bk.className="sec-btn";
-              bk.style.cssText="margin-top:8px;padding:14px";
-              bk.innerHTML="🏠 Retour au menu";
+              bk.style.cssText="flex:1;padding:14px;font-size:13px";
+              bk.innerHTML="🏠 Menu";
               bk.onclick=function(){scr="home";render()};
-              bar.parentNode.appendChild(bk);
+              var np=document.createElement("button");
+              np.className="primary-btn";
+              np.style.cssText="flex:1;padding:14px;font-size:13px";
+              np.innerHTML="📸 Nouvelle photo";
+              np.onclick=function(){window._cam()};
+              wrap.appendChild(bk);wrap.appendChild(np);
+              bar.parentNode.appendChild(wrap);
             }
           },400);
         }
@@ -558,6 +675,108 @@ window._gen=function(){
       }catch(e){}
       fallbackDownload();
     },"image/png");
+  };
+  im.src=img;
+};
+
+// ── GENERATE PDF ──
+window._genPDF=function(){
+  var btn2=document.getElementById("dlbpdf");
+  if(btn2){btn2.disabled=true;btn2.textContent="⏳ Génération PDF..."}
+
+  // First generate the stamped image on canvas (same as _gen)
+  var im=new Image();
+  im.onload=function(){
+    var cv=document.getElementById("cv"),cx=cv.getContext("2d");
+    cv.width=im.width;cv.height=im.height;cx.drawImage(im,0,0);
+    drawStampOnCanvas(cv,cx,im.width,im.height);
+
+    // Get JPEG data for smaller PDF
+    var jpgData=cv.toDataURL("image/jpeg",0.92);
+    var jpgRaw=atob(jpgData.split(",")[1]);
+    var jpgLen=jpgRaw.length;
+    var jpgBytes=new Uint8Array(jpgLen);
+    for(var j=0;j<jpgLen;j++)jpgBytes[j]=jpgRaw.charCodeAt(j);
+
+    // PDF size proportional to image (72 DPI, max 595pt wide)
+    var iw=cv.width,ih=cv.height;
+    var maxW=595.28;
+    var scale2=Math.min(maxW/iw,1);
+    var pw=iw*scale2,ph=ih*scale2;
+    var dw=pw,dh=ph;
+    var ox=0,oy=0;
+
+    var o=[];
+    function addObj(s){o.push(s);return o.length}
+    addObj("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj");
+    addObj("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj");
+    addObj("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "+pw.toFixed(2)+" "+ph.toFixed(2)+"] /Contents 4 0 R /Resources << /XObject << /Img 5 0 R >> >> >>\nendobj");
+    addObj("4 0 obj\n<< /Length "+(("q "+dw.toFixed(2)+" 0 0 "+dh.toFixed(2)+" "+ox.toFixed(2)+" "+oy.toFixed(2)+" cm /Img Do Q").length)+" >>\nstream\nq "+dw.toFixed(2)+" 0 0 "+dh.toFixed(2)+" "+ox.toFixed(2)+" "+oy.toFixed(2)+" cm /Img Do Q\nendstream\nendobj");
+    addObj("5 0 obj\n<< /Type /XObject /Subtype /Image /Width "+iw+" /Height "+ih+" /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "+jpgLen+" >>\nstream\n");
+
+    // Build PDF bytes
+    var header="%PDF-1.4\n";
+    var parts=[header];
+    var offsets=[];
+    for(var p=0;p<o.length;p++){
+      var pos=0;for(var q=0;q<parts.length;q++)pos+=(typeof parts[q]==="string")?parts[q].length:parts[q].length;
+      offsets.push(pos);
+      parts.push(o[p]);
+      if(p===4){parts.push(jpgBytes);parts.push("\nendstream\nendobj\n")}else{parts.push("\n")}
+    }
+    var xrefPos=0;for(var q2=0;q2<parts.length;q2++)xrefPos+=(typeof parts[q2]==="string")?parts[q2].length:parts[q2].length;
+    var xref="xref\n0 "+(o.length+1)+"\n0000000000 65535 f \n";
+    for(var r2=0;r2<offsets.length;r2++){var os2=String(offsets[r2]);while(os2.length<10)os2="0"+os2;xref+=os2+" 00000 n \n"}
+    xref+="trailer\n<< /Size "+(o.length+1)+" /Root 1 0 R >>\nstartxref\n"+xrefPos+"\n%%EOF";
+    parts.push(xref);
+
+    // Combine all parts into one Uint8Array
+    var totalLen=0;for(var t=0;t<parts.length;t++)totalLen+=(typeof parts[t]==="string")?parts[t].length:parts[t].length;
+    var pdfBuf=new Uint8Array(totalLen);
+    var off=0;
+    for(var t2=0;t2<parts.length;t2++){
+      if(typeof parts[t2]==="string"){for(var c2=0;c2<parts[t2].length;c2++){pdfBuf[off++]=parts[t2].charCodeAt(c2)}}
+      else{pdfBuf.set(parts[t2],off);off+=parts[t2].length}
+    }
+
+    var pdfBlob=new Blob([pdfBuf],{type:"application/pdf"});
+    var pdfName=fname().replace(".png",".pdf");
+
+    function donePDF(m){if(btn2){btn2.disabled=false;btn2.textContent="📄 Exporter en PDF"}toast(m)}
+
+    function fallbackPDF(){
+      try{
+        var url=URL.createObjectURL(pdfBlob);
+        var a=document.createElement("a");a.href=url;a.download=pdfName;
+        document.body.appendChild(a);a.click();document.body.removeChild(a);
+        setTimeout(function(){URL.revokeObjectURL(url)},5000);
+        donePDF(pdfName+" sauvegardé ✓");
+      }catch(e){
+        // Last resort: open PDF in new tab
+        try{
+          var url2=URL.createObjectURL(pdfBlob);
+          window.open(url2,"_blank");
+          donePDF("PDF ouvert — sauvegardez depuis le navigateur");
+        }catch(e2){donePDF("Erreur PDF")}
+      }
+    }
+
+    // Try navigator.share first
+    try{
+      if(navigator.share&&navigator.canShare){
+        var pdfFile=new File([pdfBlob],pdfName,{type:"application/pdf"});
+        if(navigator.canShare({files:[pdfFile]})){
+          navigator.share({files:[pdfFile]}).then(function(){
+            donePDF(pdfName+" partagé ✓");
+          }).catch(function(e){
+            if(e.name==="AbortError"){donePDF("")}
+            else{fallbackPDF()}
+          });
+          return;
+        }
+      }
+    }catch(e){}
+    fallbackPDF();
   };
   im.src=img;
 };
