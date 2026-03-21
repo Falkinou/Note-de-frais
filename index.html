@@ -292,7 +292,7 @@ function renderHome(el){
   h+='</div>';
 
   // Copyright
-  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.0.0</p></div>';
+  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.0.2</p></div>';
 
   h+='<div class="blob1"></div><div class="blob2"></div><div class="blob3"></div>';
   el.innerHTML=h;
@@ -442,8 +442,9 @@ function renderEdit(el){
   // Rotation
   h+='<div class="glass" style="padding:10px 12px;flex:1;display:flex;align-items:center;gap:6px">';
   h+='<span style="font-size:14px">🔄</span>';
-  h+='<input type="range" min="-180" max="180" step="1" value="'+S.rotation+'" oninput="window._rot(this.value)" style="flex:1">';
-  h+='<span style="font-size:10px;opacity:.5;min-width:28px">'+S.rotation+'°</span>';
+  h+='<input type="range" min="-180" max="180" step="1" value="'+S.rotation+'" oninput="window._rot(this.value);document.getElementById(\'rotNum\').value=this.value" style="flex:1">';
+  h+='<input id="rotNum" type="number" min="-180" max="180" value="'+S.rotation+'" onchange="window._rot(this.value);document.querySelector(\'[type=range][oninput*=_rot]\').value=this.value" style="width:44px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#fbbf24;font-size:12px;font-weight:700;font-family:Outfit,sans-serif;text-align:center;padding:4px 2px;outline:none;-moz-appearance:textfield">';
+  h+='<span style="font-size:10px;opacity:.4">°</span>';
   h+='</div>';
   // Date
   h+='<div class="glass" style="padding:10px 12px;flex:1;display:flex;align-items:center;gap:6px">';
@@ -568,10 +569,10 @@ function drawStampOnCanvas(cv,cx,imW,imH){
   }
   cx.restore();
 
-  // Pixel-level ink effects
-  if(S.vintage){
-    var gx=Math.max(0,Math.floor(sx-sW*0.05)),gy=Math.max(0,Math.floor(sy-sH*0.05));
-    var gw=Math.min(Math.ceil(sW*1.1),cv.width-gx),gh=Math.min(Math.ceil(sH*1.1),cv.height-gy);
+  // Pixel-level ink effects - only when there's a background (not noBg)
+  if(S.vintage&&!S.noBg){
+    var gx=Math.max(0,Math.floor(sx)),gy=Math.max(0,Math.floor(sy));
+    var gw=Math.min(Math.ceil(sW),cv.width-gx),gh=Math.min(Math.ceil(sH),cv.height-gy);
     if(gw>0&&gh>0){
       var id=cx.getImageData(gx,gy,gw,gh);
       var dd=id.data;
@@ -579,16 +580,12 @@ function drawStampOnCanvas(cv,cx,imW,imH){
         var px=(k/4)%gw,py=Math.floor((k/4)/gw);
         var dcx2=(px-gw/2)/(gw/2),dcy2=(py-gh/2)/(gh/2);
         var dist=Math.sqrt(dcx2*dcx2+dcy2*dcy2);
-        // Pressure: darker center, lighter edges
         var pressureFade=Math.min(1,dist*0.3);
-        // Grain noise
-        var noise=(Math.random()-0.5)*35;
-        // Ink bleed: random spots lose ink
-        var bleed=Math.random()<0.03?-40:0;
-        // Edge fade
-        var edgeFade=dist>0.85?(dist-0.85)*200:0;
+        var noise=(Math.random()-0.5)*25;
+        var bleed=Math.random()<0.02?-30:0;
+        var edgeFade=dist>0.85?(dist-0.85)*150:0;
         dd[k]+=noise+bleed;dd[k+1]+=noise+bleed;dd[k+2]+=noise+bleed;
-        dd[k+3]=Math.max(0,dd[k+3]-edgeFade-pressureFade*15);
+        dd[k+3]=Math.max(0,dd[k+3]-edgeFade-pressureFade*10);
       }
       cx.putImageData(id,gx,gy);
     }
