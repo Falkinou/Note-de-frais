@@ -132,32 +132,25 @@ try{stampCount=parseInt(localStorage.getItem("ndf_count"))||0}catch(e){}
 try{var lp=JSON.parse(localStorage.getItem("ndf_lastpos"));if(lp&&lp.x)sp=lp}catch(e){}
 try{var sm=localStorage.getItem("ndf_savemethod");if(sm)saveMethod=sm}catch(e){}
 var globalCount=0;
+var CK_NS="falkinou-ndf";
+var CK_KEY="stamps-v2";
 
 function incCount(){
   stampCount++;try{localStorage.setItem("ndf_count",String(stampCount))}catch(e){}
-  // Increment global counter
-  var url="https://api.countapi.xyz/hit/falkinou.github.io/ndf-stamps";
-  fetch(url).then(function(r){
-    console.log("[NDF] HIT status:",r.status);
-    return r.json();
-  }).then(function(d){
-    console.log("[NDF] HIT response:",JSON.stringify(d));
+  fetch("https://api.countapi.xyz/hit/"+CK_NS+"/"+CK_KEY).then(function(r){return r.json()}).then(function(d){
     if(d&&d.value!=null){globalCount=d.value;var el=document.getElementById("globalCounter");if(el)el.textContent=d.value}
-  }).catch(function(e){console.log("[NDF] HIT error:",e)});
+  }).catch(function(){});
 }
 function initGlobalCount(){
-  var url="https://api.countapi.xyz/get/falkinou.github.io/ndf-stamps";
-  fetch(url).then(function(r){
-    console.log("[NDF] GET status:",r.status);
-    return r.json();
-  }).then(function(d){
-    console.log("[NDF] GET response:",JSON.stringify(d));
+  fetch("https://api.countapi.xyz/get/"+CK_NS+"/"+CK_KEY).then(function(r){return r.json()}).then(function(d){
     if(d&&d.value!=null){globalCount=d.value;var el=document.getElementById("globalCounter");if(el)el.textContent=d.value}
-    else{var el2=document.getElementById("globalCounter");if(el2)el2.textContent="—"}
-  }).catch(function(e){
-    console.log("[NDF] GET error:",e);
-    var el3=document.getElementById("globalCounter");if(el3)el3.textContent="—";
-  });
+    else{
+      // Counter doesn't exist yet, create it with enable_reset and update_lowerbound
+      fetch("https://api.countapi.xyz/create?namespace="+CK_NS+"&key="+CK_KEY+"&value=0&enable_reset=1&update_lowerbound=-1&update_upperbound=1").then(function(r2){return r2.json()}).then(function(d2){
+        globalCount=0;var el2=document.getElementById("globalCounter");if(el2)el2.textContent="0";
+      }).catch(function(){var el3=document.getElementById("globalCounter");if(el3)el3.textContent="—"});
+    }
+  }).catch(function(){var el4=document.getElementById("globalCounter");if(el4)el4.textContent="—"});
 }
 function savePos(){try{localStorage.setItem("ndf_lastpos",JSON.stringify(sp))}catch(e){}}
 
@@ -322,7 +315,7 @@ function renderHome(el){
   h+='</div>';
 
   // Copyright
-  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.2.2</p></div>';
+  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.2.3</p></div>';
 
   h+='<div class="blob1"></div><div class="blob2"></div><div class="blob3"></div>';
   el.innerHTML=h;
