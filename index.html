@@ -135,34 +135,28 @@ var globalCount=0;
 
 function incCount(){
   stampCount++;try{localStorage.setItem("ndf_count",String(stampCount))}catch(e){}
-  // Try multiple counter APIs
-  tryCounterAPIs("hit",function(v){
-    if(v){globalCount=v;var el=document.getElementById("globalCounter");if(el)el.textContent=v}
-  });
+  // Increment global counter
+  var url="https://api.countapi.xyz/hit/falkinou.github.io/ndf-stamps";
+  fetch(url).then(function(r){
+    console.log("[NDF] HIT status:",r.status);
+    return r.json();
+  }).then(function(d){
+    console.log("[NDF] HIT response:",JSON.stringify(d));
+    if(d&&d.value!=null){globalCount=d.value;var el=document.getElementById("globalCounter");if(el)el.textContent=d.value}
+  }).catch(function(e){console.log("[NDF] HIT error:",e)});
 }
 function initGlobalCount(){
-  tryCounterAPIs("get",function(v){
-    if(v){globalCount=v;var el=document.getElementById("globalCounter");if(el)el.textContent=v}
+  var url="https://api.countapi.xyz/get/falkinou.github.io/ndf-stamps";
+  fetch(url).then(function(r){
+    console.log("[NDF] GET status:",r.status);
+    return r.json();
+  }).then(function(d){
+    console.log("[NDF] GET response:",JSON.stringify(d));
+    if(d&&d.value!=null){globalCount=d.value;var el=document.getElementById("globalCounter");if(el)el.textContent=d.value}
     else{var el2=document.getElementById("globalCounter");if(el2)el2.textContent="—"}
-  });
-}
-function tryCounterAPIs(action,cb){
-  // API 1: countapi.xyz (known CORS support)
-  var url1=action==="hit"?"https://api.countapi.xyz/hit/falkinou.github.io/ndf-stamps":"https://api.countapi.xyz/get/falkinou.github.io/ndf-stamps";
-  fetch(url1).then(function(r){return r.json()}).then(function(d){
-    console.log("[NDF] countapi.xyz:",JSON.stringify(d));
-    if(d&&d.value!=null)cb(d.value);else cb(null);
   }).catch(function(e){
-    console.log("[NDF] countapi.xyz failed:",e.message);
-    // API 2: counterapi.dev via no-redirect URL
-    var url2=action==="hit"?"https://api.counterapi.dev/v1/falkinou-ndf/stamps/up/":"https://api.counterapi.dev/v1/falkinou-ndf/stamps/";
-    fetch(url2).then(function(r){return r.json()}).then(function(d2){
-      console.log("[NDF] counterapi.dev:",JSON.stringify(d2));
-      var v=d2.count||d2.value;if(v)cb(v);else cb(null);
-    }).catch(function(e2){
-      console.log("[NDF] counterapi.dev failed:",e2.message);
-      cb(null);
-    });
+    console.log("[NDF] GET error:",e);
+    var el3=document.getElementById("globalCounter");if(el3)el3.textContent="—";
   });
 }
 function savePos(){try{localStorage.setItem("ndf_lastpos",JSON.stringify(sp))}catch(e){}}
@@ -328,7 +322,7 @@ function renderHome(el){
   h+='</div>';
 
   // Copyright
-  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.2.1</p></div>';
+  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.2.2</p></div>';
 
   h+='<div class="blob1"></div><div class="blob2"></div><div class="blob3"></div>';
   el.innerHTML=h;
