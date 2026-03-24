@@ -135,30 +135,27 @@ var globalCount=0;
 
 function incCount(){
   stampCount++;try{localStorage.setItem("ndf_count",String(stampCount))}catch(e){}
-  // Increment global via JSONP (no CORS issues ever)
-  jsonpHit("https://api.countapi.xyz/hit/falkinou-ndf/stamps-v3",function(v){
-    if(v!=null){globalCount=v;var el=document.getElementById("globalCounter");if(el)el.textContent=v}
+  // counterapi.dev v1 WITHOUT trailing slash
+  fetch("https://api.counterapi.dev/v1/falkinou-ndf/stamps/up").then(function(r){return r.json()}).then(function(d){
+    if(d&&d.count!=null){globalCount=d.count;var el=document.getElementById("globalCounter");if(el)el.textContent=d.count}
+  }).catch(function(){
+    // Fallback: mileshilliard
+    fetch("https://countapi.mileshilliard.com/api/v1/hit/falkinou-ndf-stamps").then(function(r){return r.json()}).then(function(d2){
+      if(d2&&d2.value!=null){globalCount=d2.value;var el=document.getElementById("globalCounter");if(el)el.textContent=d2.value}
+    }).catch(function(){});
   });
 }
 function initGlobalCount(){
-  jsonpHit("https://api.countapi.xyz/get/falkinou-ndf/stamps-v3",function(v){
-    if(v!=null){globalCount=v;var el=document.getElementById("globalCounter");if(el)el.textContent=v}
+  fetch("https://api.counterapi.dev/v1/falkinou-ndf/stamps").then(function(r){return r.json()}).then(function(d){
+    if(d&&d.count!=null){globalCount=d.count;var el=document.getElementById("globalCounter");if(el)el.textContent=d.count}
     else{var el2=document.getElementById("globalCounter");if(el2)el2.textContent="0"}
+  }).catch(function(){
+    // Fallback: mileshilliard
+    fetch("https://countapi.mileshilliard.com/api/v1/get/falkinou-ndf-stamps").then(function(r){return r.json()}).then(function(d2){
+      if(d2&&d2.value!=null){globalCount=d2.value;var el=document.getElementById("globalCounter");if(el)el.textContent=d2.value}
+      else{var el2=document.getElementById("globalCounter");if(el2)el2.textContent="0"}
+    }).catch(function(){var el3=document.getElementById("globalCounter");if(el3)el3.textContent="—"});
   });
-}
-// JSONP: load API response as script tag - bypasses ALL CORS restrictions
-function jsonpHit(url,cb){
-  var cbName="_ndf_"+Math.random().toString(36).substr(2,6);
-  window[cbName]=function(data){
-    delete window[cbName];
-    var s=document.getElementById(cbName);if(s)s.remove();
-    cb(data&&data.value!=null?data.value:null);
-  };
-  var s=document.createElement("script");
-  s.id=cbName;
-  s.src=url+"?callback="+cbName;
-  s.onerror=function(){delete window[cbName];s.remove();cb(null)};
-  document.head.appendChild(s);
 }
 function savePos(){try{localStorage.setItem("ndf_lastpos",JSON.stringify(sp))}catch(e){}}
 
@@ -323,7 +320,7 @@ function renderHome(el){
   h+='</div>';
 
   // Copyright
-  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.2.5</p></div>';
+  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.2.6</p></div>';
 
   h+='<div class="blob1"></div><div class="blob2"></div><div class="blob3"></div>';
   el.innerHTML=h;
