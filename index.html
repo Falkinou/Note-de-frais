@@ -315,7 +315,7 @@ function renderHome(el){
   h+='</div>';
 
   // Copyright
-  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.2.3</p></div>';
+  h+='<div style="padding:0 30px 24px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.15);letter-spacing:.04em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.2.4</p></div>';
 
   h+='<div class="blob1"></div><div class="blob2"></div><div class="blob3"></div>';
   el.innerHTML=h;
@@ -821,8 +821,12 @@ window._gen=function(){
               navigator.share({files:[file]}).then(function(){
                 done(fn+" partagé ✓",true);
               }).catch(function(e){
-                if(e.name==="AbortError"){if(btn){btn.disabled=false;btn.textContent="💾 Sauvegarder l'image"}}
-                else{fallbackDownload()}
+                if(e.name==="AbortError"){
+                  // User cancelled - still count it since file was generated
+                  done("Partage annulé",true);
+                }else{
+                  fallbackDownload();
+                }
               });
               return;
             }
@@ -925,7 +929,7 @@ window._genPDF=function(){
           navigator.share({files:[pdfFile]}).then(function(){
             donePDF(pdfName+" partagé ✓",true);
           }).catch(function(e){
-            if(e.name==="AbortError"){donePDF("",false)}
+            if(e.name==="AbortError"){donePDF("Partage annulé",true)}
             else{fallbackPDF()}
           });
           return;
@@ -989,7 +993,7 @@ window._expressSave=function(){
               navigator.share({files:[file]}).then(function(){
                 expressDone(fn+" ⚡ partagé !");
               }).catch(function(e){
-                if(e.name==="AbortError"){expressMode=false;if(btn){btn.disabled=false;btn.textContent="⚡ Sauvegarder"}}
+                if(e.name==="AbortError"){expressDone("Partage annulé")}
                 else{expressDownload(blob,fn,expressDone)}
               });return;
             }
