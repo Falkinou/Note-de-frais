@@ -309,7 +309,7 @@ function renderHome(el){
   h+='<div style="margin-top:28px;text-align:center;font-family:\'Instrument Sans\',sans-serif;font-size:10px;color:rgba(255,255,255,.85);animation:fadeUp .5s ease .3s both">'+ic('lock',12)+' 100% local · Aucune donnée transmise</div>';
 
   // Copyright
-  h+='<div style="margin-top:12px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.85);letter-spacing:.02em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.5.7</p></div>';
+  h+='<div style="margin-top:12px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.85);letter-spacing:.02em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.5.9</p></div>';
 
   h+='<div class="blob1"></div><div class="blob2"></div>';
   el.innerHTML=h;
@@ -448,7 +448,7 @@ window._applyCrop=function(){
     var cx=cv2.getContext("2d");cx.drawImage(im,sx,sy,sw,sh,0,0,sw,sh);
     img=cv2.toDataURL("image/png");
     findBestPosition(img,function(pos){
-      sp=pos;scr="edit";render();
+      sp=pos;S.rotation=0;S.scale=1;save();scr="edit";render();
       toast("Tampon positionné automatiquement ✓");
     });
   };
@@ -459,7 +459,7 @@ window._applyCrop=function(){
 window._skipCrop=function(){
   img=imgFull;
   findBestPosition(img,function(pos){
-    sp=pos;scr="edit";render();
+    sp=pos;S.rotation=0;S.scale=1;save();scr="edit";render();
     toast("Recadrage passé · Tampon positionné ✓");
   });
 };
@@ -612,7 +612,7 @@ function setupDragAndPinch(){
       var dist=Math.sqrt(dx*dx+dy*dy),ratio=dist/pinchStartDist;
       S.scale=Math.max(0.3,Math.min(2.5,pinchStartScale*ratio));
       var angleDelta=getAngle(e.touches)-pinchStartAngle;
-      S.rotation=pinchStartRot+angleDelta;
+      S.rotation=((pinchStartRot+angleDelta)%360+540)%360-180;
       var sd2=document.getElementById("sd");if(sd2)sd2.style.transform="translate(-50%,-50%) scale("+S.scale+") rotate("+S.rotation+"deg)";
       var ri=document.getElementById("rotInput");if(ri)ri.value=Math.round(S.rotation);
       var rs=document.getElementById("rotSlider");if(rs)rs.value=S.rotation;}
@@ -996,7 +996,7 @@ window._express=function(){
     rd.onload=function(ev){
       resizeTo1080(ev.target.result,function(resized){
         img=resized;imgFull=img;
-        S.scale=0.6;save();
+        S.scale=0.6;S.rotation=0;save();
         expressMode=true;
         findBestPosition(img,function(pos){
           sp=pos;scr="edit";render();
