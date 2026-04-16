@@ -309,7 +309,7 @@ function renderHome(el){
   h+='<div style="margin-top:28px;text-align:center;font-family:\'Instrument Sans\',sans-serif;font-size:10px;color:rgba(255,255,255,.85);animation:fadeUp .5s ease .3s both">'+ic('lock',12)+' 100% local · Aucune donnée transmise</div>';
 
   // Copyright
-  h+='<div style="margin-top:12px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.85);letter-spacing:.02em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.5.9</p></div>';
+  h+='<div style="margin-top:12px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.85);letter-spacing:.02em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.6.0</p></div>';
 
   h+='<div class="blob1"></div><div class="blob2"></div>';
   el.innerHTML=h;
@@ -661,11 +661,7 @@ function drawStampOnCanvas(cv,cx,imW,imH){
   var ds=S.showDate?dateStr():null;if(ds)lines.push(ds);
   var sW=imW*0.4*S.scale,lH=sW*0.09,pd=lH*0.9;
   var sH=S.shape==="circle"?Math.max(sW,lines.length*lH+pd*2):lines.length*lH+pd*2;
-  // Clamp position so stamp stays within image bounds
-  var rawX=(imW*sp.x)/100, rawY=(imH*sp.y)/100;
-  var clampedX=Math.max(sW/2+2, Math.min(imW-sW/2-2, rawX));
-  var clampedY=Math.max(sH/2+2, Math.min(imH-sH/2-2, rawY));
-  var sx=clampedX-sW/2, sy=clampedY-sH/2;
+  var sx=(imW*sp.x)/100-sW/2,sy=(imH*sp.y)/100-sH/2;
   var stampCx=sx+sW/2,stampCy=sy+sH/2;
 
   // Slight random rotation for hand-stamped feel
