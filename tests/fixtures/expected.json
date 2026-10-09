@@ -1,0 +1,55 @@
+[
+  {
+    "name": "fr-numeric",
+    "status": "found",
+    "dates": [
+      "2026-10-08"
+    ]
+  },
+  {
+    "name": "short-year",
+    "status": "found",
+    "dates": [
+      "2026-10-08"
+    ]
+  },
+  {
+    "name": "fr-month",
+    "status": "found",
+    "dates": [
+      "2026-10-08"
+    ]
+  },
+  {
+    "name": "iso",
+    "status": "found",
+    "dates": [
+      "2026-10-08"
+    ]
+  },
+  {
+    "name": "two-dates",
+    "status": "ambiguous",
+    "dates": [
+      "2026-10-07",
+      "2026-10-08"
+    ]
+  },
+  {
+    "name": "validity",
+    "status": "found",
+    "dates": [
+      "2026-10-08"
+    ]
+  },
+  {
+    "name": "no-date",
+    "status": "missing",
+    "dates": []
+  },
+  {
+    "name": "invalid-date",
+    "status": "missing",
+    "dates": []
+  }
+]

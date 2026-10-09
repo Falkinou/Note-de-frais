@@ -1,0 +1,14 @@
+{
+  "name": "stampfel",
+  "version": "1.7.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "vendor:ocr": "node scripts/vendor-ocr.mjs",
+    "test:ocr": "node scripts/test-ocr.cjs"
+  },
+  "dependencies": {
+    "tesseract.js": "7.0.0",
+    "@tesseract.js-data/fra": "1.0.0"
+  }
+}
