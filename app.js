@@ -54,10 +54,8 @@ var FONTS=[
 var DS={address:"Orange SA\n111, Quai du Pr\u00e9sident Roosevelt,\n92130 Issy Les Moulineaux",colorIdx:0,scale:1,showDate:false,shape:"rect",noBg:true,textColor:"#111111",bold:true,vintage:true,rotation:0,fontIdx:3,arcText:false};
 
 var S,scr="home",img=null,imgFull=null,sp={x:60,y:70},tt;
-var crop={x1:10,y1:10,x2:90,y2:90},cropDrag=null;
+var crop=ReceiptPixels.fullFrame(),cropDrag=null,cropRevision=0,cropEntry=null,photoBusy=false,photoSequence=0;
 var ndfDate="";
-var imgEnhanced=false;
-var imgOriginal=null;
 var ticket=null, ticketSequence=0, importSequence=0, exportBusy=false;
 var pdfImport=null, pdfPage=1, pdfPreviewSequence=0, pendingAppReload=false;
 var stampCache=null, imageWidth=0, imageHeight=0, editorObserver=null;
@@ -211,7 +209,7 @@ async function readTicketDate(current){
   current.ocrStatus="reading";updateDateUI();
   try{
     var result=current.pdfText?Receipt.extractDates(current.pdfText):null;
-    if(!result||result.status==='missing')result=await ReceiptOCR.recognize(current.source);
+    if(!result||result.status==='missing')result=await ReceiptOCR.recognize(current.image);
     if(ticket!==current||current.cancelled||current.ocrRevision!==revision)return;
     current.applyOCR(result);
   }catch(error){if(ticket!==current||current.cancelled||current.ocrRevision!==revision)return;current.applyOCR({status:"error",candidates:[]})}
@@ -305,176 +303,128 @@ function renderStamp(el){
 
 // ── CROP ──
 function renderCrop(el){
-  var h='<div class="hdr">';
-  h+='<span class="htitle">Recadrer</span>';
-  h+='</div>';
-  h+='<div class="crop-stage">';
-  h+='<div id="cropBox">';
-  h+='<img id="cropImg" alt="Ticket à recadrer" src="'+imgFull+'" draggable="false">';
-  h+='<div id="cropOverlay" style="position:absolute;inset:0;touch-action:none"></div>';
-  h+='</div>';
-  h+='</div>';
-
-  // Fixed bottom bar - always visible
-  h+='<div style="padding:10px 16px 24px;border-top:1px solid rgba(255,255,255,.06);background:rgba(17,10,4,.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0">';
-  h+='<p style="font-size:11px;color:rgba(255,255,255,.95);text-align:center;margin-bottom:8px">Déplacez les poignées pour recadrer</p><p id="dateStatus" role="status" aria-live="polite" style="text-align:center;margin-bottom:8px"></p>';
-  h+='<div style="display:flex;gap:8px;margin-bottom:8px">';
-  h+='<button class="sec-btn" aria-label="Retour à l’accueil" onclick="window._go(\'home\')" style="flex:0 0 44px;width:44px;padding:12px 0;font-size:14px">←</button>';
-  h+='<button class="sec-btn" onclick="window._autoCrop()" style="flex:1;padding:12px 8px;font-size:12px">'+ic('search',14)+' Auto</button>';
-  h+='<button class="sec-btn" onclick="window._rotate90()" style="flex:1;padding:12px 8px;font-size:13px">'+ic('rotate',14)+' 90°</button>';
-  h+='<button class="primary-btn" onclick="window._applyCrop()" style="flex:1;padding:12px 8px;font-size:14px">Valider ✓</button>';
-  h+='</div>';
-  h+='<button class="sec-btn" onclick="window._skipCrop()" style="padding:10px;font-size:12px;opacity:.7">Passer le recadrage →</button>';
-  h+='</div>';
-
-  el.innerHTML=h;
+  el.innerHTML='<div class="hdr"><button class="glass-btn compact" onclick="window._cancelCrop()" aria-label="'+(cropEntry?'Revenir au ticket':'Retour à l’accueil')+'">← Retour</button><span class="htitle">Recadrer</span></div>'+
+    '<div class="crop-stage"><div id="cropBox"><img id="cropImg" alt="Ticket à recadrer" src="'+imgFull+'" draggable="false"><div id="cropOverlay"></div></div><canvas id="cropLoupe" width="220" height="220" aria-hidden="true" hidden></canvas></div>'+
+    '<div class="crop-bar"><p id="cropStatus" role="status">Placez les quatre coins sur le ticket</p><div class="crop-actions">'+
+    '<button id="autoCrop" class="sec-btn" onclick="window._autoCrop()">'+ic('search',16)+' Auto</button>'+
+    '<button id="rotatePhoto" class="sec-btn" onclick="window._rotate90()">'+ic('rotate',16)+' 90°</button>'+
+    '<button id="resetCrop" class="sec-btn" onclick="window._resetCrop()">Tout garder</button></div>'+
+    '<button id="applyCrop" class="primary-btn" onclick="window._applyCrop()">Redresser et continuer</button>'+
+    '<button id="skipCrop" class="crop-skip" onclick="window._skipCrop()">Passer le recadrage →</button></div>';
   setupCrop();
 }
-
 function setupCrop(){
-  var box=document.getElementById("cropBox"),ov=document.getElementById("cropOverlay");
-  if(!box||!ov)return;
+  var box=document.getElementById('cropBox'),overlay=document.getElementById('cropOverlay');
+  var names=['supérieur gauche','supérieur droit','inférieur droit','inférieur gauche'];
+  overlay.innerHTML='<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path id="cropShade" fill="rgba(0,0,0,.6)" fill-rule="evenodd"></path><polygon id="cropPolygon" fill="transparent" stroke="#edb28b" stroke-width="2" vector-effect="non-scaling-stroke"></polygon></svg>'+names.map(function(name,i){return '<button type="button" class="crop-handle" data-corner="'+i+'" aria-label="Recadrage : coin '+name+', flèches pour déplacer"><span></span></button>'}).join('');
   drawCropUI();
-
-  function getPos(e){
-    var rect=box.getBoundingClientRect();
-    var cx=e.clientX;
-    var cy=e.clientY;
-    return{x:Math.max(0,Math.min(100,((cx-rect.left)/rect.width)*100)),y:Math.max(0,Math.min(100,((cy-rect.top)/rect.height)*100))}
+  function position(e){var rect=box.getBoundingClientRect();return {x:Math.max(0,Math.min(100,(e.clientX-rect.left)/rect.width*100)),y:Math.max(0,Math.min(100,(e.clientY-rect.top)/rect.height*100))}}
+  overlay.addEventListener('pointerdown',function(e){
+    var handle=e.target.closest('[data-corner]');if(!handle||photoBusy||cropDrag)return;
+    e.preventDefault();cropRevision++;
+    var corner=Number(handle.dataset.corner),pointer=position(e);
+    cropDrag={corner:corner,pointer:e.pointerId,offset:{x:crop[corner].x-pointer.x,y:crop[corner].y-pointer.y}};
+    overlay.setPointerCapture(e.pointerId);handle.classList.add('dragging');drawCropLoupe(corner);
+  });
+  overlay.addEventListener('pointermove',function(e){
+    if(!cropDrag||e.pointerId!==cropDrag.pointer)return;e.preventDefault();
+    var p=position(e);moveCrop(cropDrag.corner,p.x+cropDrag.offset.x,p.y+cropDrag.offset.y);drawCropLoupe(cropDrag.corner);
+  });
+  function finish(e){
+    if(!cropDrag||e.pointerId!==cropDrag.pointer)return;
+    cropDrag=null;overlay.querySelectorAll('.dragging').forEach(function(handle){handle.classList.remove('dragging')});
+    var loupe=document.getElementById('cropLoupe');if(loupe)loupe.hidden=true;
   }
-
-  ov.addEventListener("pointerdown",function(e){
-    var t=e.target;if(!t.dataset||!t.dataset.corner)return;
-    e.preventDefault();e.stopPropagation();
-    cropDrag=t.dataset.corner;
-    ov.setPointerCapture(e.pointerId);
+  overlay.addEventListener('pointerup',finish);overlay.addEventListener('pointercancel',finish);overlay.addEventListener('lostpointercapture',finish);
+  overlay.addEventListener('keydown',function(e){
+    var value=e.target.dataset.corner,delta={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];
+    if(value===undefined||!delta||photoBusy)return;e.preventDefault();var corner=Number(value),step=e.shiftKey?3:.5;
+    moveCrop(corner,crop[corner].x+delta[0]*step,crop[corner].y+delta[1]*step);
   });
-  ov.addEventListener("pointermove",function(e){
-    if(!cropDrag)return;
-    e.preventDefault();
-    var p=getPos(e);
-    moveCrop(cropDrag,p.x,p.y);
-  });
-  ov.addEventListener("keydown",function(e){
-    var corner=e.target.dataset.corner,delta={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];
-    if(!corner||!delta)return;e.preventDefault();
-    var step=e.shiftKey?5:1;
-    moveCrop(corner,crop[corner[1]==='l'?'x1':'x2']+delta[0]*step,crop[corner[0]==='t'?'y1':'y2']+delta[1]*step);
-  });
-  ov.addEventListener("pointerup",function(){cropDrag=null});
-  ov.addEventListener("pointercancel",function(){cropDrag=null});
 }
-
 function moveCrop(corner,x,y){
-  x=Math.max(0,Math.min(100,x));y=Math.max(0,Math.min(100,y));
-  if(corner[1]==='l')crop.x1=Math.min(x,crop.x2-8);else crop.x2=Math.max(x,crop.x1+8);
-  if(corner[0]==='t')crop.y1=Math.min(y,crop.y2-8);else crop.y2=Math.max(y,crop.y1+8);
-  drawCropUI();
+  var next=crop.map(function(p){return {x:p.x,y:p.y}});next[corner]={x:Math.max(0,Math.min(100,x)),y:Math.max(0,Math.min(100,y))};
+  if(!ReceiptPixels.validQuad(next))return;
+  crop=next;cropRevision++;drawCropUI();
+  var status=document.getElementById('cropStatus');if(status)status.textContent='Coins ajustés · perspective corrigée à la validation';
 }
-
 function drawCropUI(){
-  var ov=document.getElementById("cropOverlay");if(!ov)return;
-  var focused=document.activeElement&&document.activeElement.dataset.corner;
-  var x1=crop.x1,y1=crop.y1,x2=crop.x2,y2=crop.y2;
-  var h='';
-  // Dim regions
-  h+='<div class="crop-dim" style="top:0;left:0;right:0;height:'+y1+'%"></div>';
-  h+='<div class="crop-dim" style="bottom:0;left:0;right:0;height:'+(100-y2)+'%"></div>';
-  h+='<div class="crop-dim" style="top:'+y1+'%;left:0;width:'+x1+'%;height:'+(y2-y1)+'%"></div>';
-  h+='<div class="crop-dim" style="top:'+y1+'%;right:0;width:'+(100-x2)+'%;height:'+(y2-y1)+'%"></div>';
-  // Border
-  h+='<div style="position:absolute;left:'+x1+'%;top:'+y1+'%;width:'+(x2-x1)+'%;height:'+(y2-y1)+'%;border:2px solid rgba(249,115,22,.8);pointer-events:none;border-radius:4px"></div>';
-  // Handles
-  h+='<button type="button" aria-label="Recadrage : coin supérieur gauche, flèches pour déplacer" class="crop-handle" data-corner="tl" style="left:'+x1+'%;top:'+y1+'%"></button>';
-  h+='<button type="button" aria-label="Recadrage : coin supérieur droit, flèches pour déplacer" class="crop-handle" data-corner="tr" style="left:'+x2+'%;top:'+y1+'%"></button>';
-  h+='<button type="button" aria-label="Recadrage : coin inférieur gauche, flèches pour déplacer" class="crop-handle" data-corner="bl" style="left:'+x1+'%;top:'+y2+'%"></button>';
-  h+='<button type="button" aria-label="Recadrage : coin inférieur droit, flèches pour déplacer" class="crop-handle" data-corner="br" style="left:'+x2+'%;top:'+y2+'%"></button>';
-  ov.innerHTML=h;
-  if(focused){var handle=ov.querySelector('[data-corner="'+focused+'"]');if(handle)handle.focus({preventScroll:true})}
+  var overlay=document.getElementById('cropOverlay');if(!overlay)return;
+  var path=crop.map(function(p){return p.x+','+p.y}).join(' ');
+  overlay.querySelector('#cropPolygon').setAttribute('points',path);
+  overlay.querySelector('#cropShade').setAttribute('d','M0 0H100V100H0Z M'+crop.map(function(p){return p.x+' '+p.y}).join('L')+'Z');
+  overlay.querySelectorAll('[data-corner]').forEach(function(handle){var p=crop[Number(handle.dataset.corner)];handle.style.left=p.x+'%';handle.style.top=p.y+'%'});
 }
-
-function finishCrop(current,source){
-  if(ticket!==current||current.cancelled)return;
-  current.replaceImage(source);img=source;imgOriginal=null;imgEnhanced=false;
-  var revision=current.revision;
+function drawCropLoupe(corner){
+  var canvas=document.getElementById('cropLoupe'),image=document.getElementById('cropImg');if(!canvas||!image||!image.naturalWidth)return;
+  var point=crop[corner],sample=image.naturalWidth/Math.max(1,image.clientWidth)*44,context=canvas.getContext('2d');
+  canvas.hidden=false;canvas.style.left=point.x>50?'12px':'auto';canvas.style.right=point.x>50?'auto':'12px';
+  context.fillStyle='#13120f';context.fillRect(0,0,220,220);context.imageSmoothingEnabled=true;
+  context.drawImage(image,point.x/100*image.naturalWidth-sample/2,point.y/100*image.naturalHeight-sample/2,sample,sample,0,0,220,220);
+  context.strokeStyle='#bd8057';context.lineWidth=2;context.beginPath();context.moveTo(94,110);context.lineTo(126,110);context.moveTo(110,94);context.lineTo(110,126);context.stroke();
+}
+function setPhotoBusy(value){
+  photoBusy=value;
+  document.querySelectorAll('#applyCrop,#autoCrop,#rotatePhoto,#resetCrop,#skipCrop,#recrop,#imageModes button,#dlb,#dlbpdf,.crop-handle').forEach(function(control){control.disabled=value});
+  var status=document.getElementById('photoStatus');if(status){status.textContent=value?'Traitement de l’image…':'';status.hidden=!value}
+}
+function finishCrop(current,source,selection){
+  if(ticket!==current||current.cancelled||scr!=='crop')return;
+  current.replaceImage(source);current.cropPoints=selection.map(function(p){return {x:p.x,y:p.y}});current.imageMode='original';current.enhancementCache={};
+  img=source;cropEntry=null;cropDrag=null;setPhotoBusy(false);
+  current.placementTouched=false;S.rotation=0;
+  var revision=current.revision;scr='edit';render();
   findBestPosition(img,function(pos){
-    if(ticket!==current||current.cancelled||revision!==current.revision)return;
-    sp=pos;S.rotation=0;scr='edit';render();toast('Placement proposé · ajustez si nécessaire');
+    if(ticket!==current||current.cancelled||revision!==current.revision||scr!=='edit'||current.placementTouched)return;
+    sp=pos;S.rotation=0;updateRotationInputs();updateStampOverlay();
   });
+  if(!current.date && current.dateSource!=='manual'){ReceiptOCR.cancel();readTicketDate(current)}
 }
 window._applyCrop=async function(){
-  var current=ticket,selection=Object.assign({},crop),source=imgFull;
-  if(!current||current.cancelled)return;
+  var current=ticket,selection=crop.map(function(p){return {x:p.x,y:p.y}}),source=imgFull;
+  if(photoBusy||!current||current.cancelled)return;
+  cropRevision++;var operation=++photoSequence;setPhotoBusy(true);
   try{
-    var image=await loadImage(source);if(ticket!==current||current.cancelled||imgFull!==source||scr!=='crop')return;
-    var x=Math.round(image.width*selection.x1/100),y=Math.round(image.height*selection.y1/100);
-    var width=Math.max(1,Math.round(image.width*(selection.x2-selection.x1)/100)),height=Math.max(1,Math.round(image.height*(selection.y2-selection.y1)/100));
-    var canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
-    canvas.getContext('2d').drawImage(image,x,y,width,height,0,0,width,height);
-    finishCrop(current,canvas.toDataURL('image/png'));
-  }catch(error){toast('Recadrage impossible. Réessayez.')}
+    var result=await ReceiptImage.rectify(source,selection);
+    if(ticket!==current||current.cancelled||imgFull!==source||scr!=='crop'||operation!==photoSequence)return;
+    finishCrop(current,result,selection);
+  }catch(error){if(ticket===current&&!current.cancelled&&scr==='crop'&&operation===photoSequence)toast('Recadrage impossible. Ajustez les coins et réessayez.')}
+  finally{if(ticket===current&&operation===photoSequence)setPhotoBusy(false)}
 };
-window._skipCrop=function(){finishCrop(ticket,imgFull)};
-
-// Auto-detect ticket borders and set crop handles
-window._autoCrop=function(){
-  var current=ticket,source=imgFull;if(!current||current.cancelled)return;
-  toast("Détection en cours...");
-  var im=new Image();
-  im.onload=function(){
-    if(ticket!==current||current.cancelled||imgFull!==source)return;
-    var cv2=document.createElement("canvas"),cx=cv2.getContext("2d");
-    var aw=Math.min(im.width,300),ah=Math.round(aw*im.height/im.width);
-    cv2.width=aw;cv2.height=ah;
-    cx.drawImage(im,0,0,aw,ah);
-    var id=cx.getImageData(0,0,aw,ah),d=id.data;
-    // Convert to grayscale and find edges via Sobel-like gradient
-    var gray=new Float32Array(aw*ah);
-    for(var i=0;i<aw*ah;i++)gray[i]=d[i*4]*0.299+d[i*4+1]*0.587+d[i*4+2]*0.114;
-    // Find edges using gradient magnitude
-    var edges=new Float32Array(aw*ah);
-    for(var y=1;y<ah-1;y++){
-      for(var x=1;x<aw-1;x++){
-        var gx=gray[(y-1)*aw+x+1]-gray[(y-1)*aw+x-1]+2*(gray[y*aw+x+1]-gray[y*aw+x-1])+gray[(y+1)*aw+x+1]-gray[(y+1)*aw+x-1];
-        var gy=gray[(y+1)*aw+x-1]-gray[(y-1)*aw+x-1]+2*(gray[(y+1)*aw+x]-gray[(y-1)*aw+x])+gray[(y+1)*aw+x+1]-gray[(y-1)*aw+x+1];
-        edges[y*aw+x]=Math.sqrt(gx*gx+gy*gy);
-      }
-    }
-    // Find bounding box of strong edges (ticket area)
-    var thresh=40,minX=aw,maxX=0,minY=ah,maxY=0,found=false;
-    for(var y2=2;y2<ah-2;y2++){
-      for(var x2=2;x2<aw-2;x2++){
-        if(edges[y2*aw+x2]>thresh){
-          if(x2<minX)minX=x2;if(x2>maxX)maxX=x2;
-          if(y2<minY)minY=y2;if(y2>maxY)maxY=y2;
-          found=true;
-        }
-      }
-    }
-    if(found&&(maxX-minX)>aw*0.15&&(maxY-minY)>ah*0.15){
-      // Add small margin
-      var mx=aw*0.02,my=ah*0.02;
-      crop.x1=Math.max(0,((minX-mx)/aw)*100);
-      crop.y1=Math.max(0,((minY-my)/ah)*100);
-      crop.x2=Math.min(100,((maxX+mx)/aw)*100);
-      crop.y2=Math.min(100,((maxY+my)/ah)*100);
-      drawCropUI();
-      toast("Recadrage proposé · vérifiez les bords");
-    }else{
-      toast("Détection impossible — ajustez manuellement");
-    }
-  };
-  im.src=imgFull;
+window._skipCrop=function(){if(!photoBusy){cropRevision++;finishCrop(ticket,imgFull,ReceiptPixels.fullFrame())}};
+window._resetCrop=function(){if(photoBusy)return;crop=ReceiptPixels.fullFrame();cropRevision++;drawCropUI();var status=document.getElementById('cropStatus');if(status)status.textContent='Image entière conservée'};
+window._recrop=function(){
+  if(photoBusy||!ticket)return;
+  cropEntry={source:imgFull,points:crop};crop=(ticket.cropPoints||ReceiptPixels.fullFrame()).map(function(p){return {x:p.x,y:p.y}});cropRevision++;scr='crop';render();
+};
+window._cancelCrop=function(){
+  cropRevision++;photoSequence++;ReceiptImage.cancel();setPhotoBusy(false);cropDrag=null;
+  if(cropEntry){imgFull=cropEntry.source;crop=cropEntry.points;cropEntry=null;scr='edit';render()}
+  else window._go('home');
+};
+window._autoCrop=async function(silent){
+  var current=ticket,source=imgFull,revision=++cropRevision;
+  if(photoBusy||!current||current.cancelled||scr!=='crop')return;
+  var button=document.getElementById('autoCrop'),status=document.getElementById('cropStatus');
+  if(button)button.disabled=true;if(status)status.textContent='Recherche des bords…';
+  try{
+    var result=await ReceiptImage.detect(source);
+    if(ticket!==current||current.cancelled||imgFull!==source||scr!=='crop'||revision!==cropRevision)return;
+    if(result.found){crop=result.points;drawCropUI();status.textContent='Bords proposés · vérifiez les quatre coins'}
+    else status.textContent='Bords peu nets · placez les coins à la main';
+  }catch(error){if(ticket===current&&!current.cancelled&&revision===cropRevision&&scr==='crop')status.textContent='Placez les quatre coins sur le ticket'}
+  finally{if(ticket===current&&scr==='crop'&&!photoBusy){var active=document.getElementById('autoCrop');if(active)active.disabled=false}}
 };
 
 // ── EDIT ──
 function renderEdit(el){
   el.innerHTML='<div class="hdr"><button class="glass-btn compact" onclick="window._go(\'home\')">← Accueil</button><span class="htitle">Positionner</span></div>'+
     '<div class="scr editor-content"><div class="glass image-panel"><div id="ic"><img id="ei" alt="Ticket à tamponner" src="'+img+'" draggable="false"><button type="button" id="sd" aria-label="Déplacer le tampon avec les flèches du clavier" onkeydown="window._moveStamp(event)"><img alt="" draggable="false"></button></div></div>'+
+    '<div class="photo-tools"><button id="recrop" class="photo-recrop" onclick="window._recrop()">Recadrer</button><div id="imageModes" class="image-modes" role="group" aria-label="Rendu de la photo">'+[['original','Original'],['readable','Lisible'],['mono','N&B']].map(function(mode){return '<button type="button" data-mode="'+mode[0]+'" aria-pressed="'+(ticket.imageMode===mode[0])+'" onclick="window._imageMode(\''+mode[0]+'\')">'+mode[1]+'</button>'}).join('')+'</div></div><p id="photoStatus" role="status" hidden></p>'+
     '<p class="pinch-hint">Glissez le tampon · Pincez pour ajuster</p>'+
     '<div class="glass edit-field"><label for="rotSlider">Rotation</label><div class="rotation-controls"><input id="rotSlider" type="range" min="-180" max="180" value="'+S.rotation+'" oninput="window._rot(this.value)" aria-label="Rotation du tampon"><input id="rotNum" type="number" min="-180" max="180" value="'+Math.round(S.rotation)+'" oninput="window._rot(this.value)" aria-label="Rotation en degrés"><span>°</span></div></div>'+
     '<div class="glass edit-field date-panel"><label for="ndfDateIn">Date du ticket</label><input id="ndfDateIn" type="date" value="'+ndfDate+'" oninput="window._setDate(this.value)" aria-describedby="dateStatus"><p id="dateStatus" role="status" aria-live="polite"></p><div id="dateChoices"></div><button id="retryDate" class="date-retry" onclick="window._retryDate()" type="button">Relire la date</button></div>'+
-    '<button id="enhBtn" class="sec-btn" aria-pressed="'+imgEnhanced+'" onclick="window._toggleEnhance()">'+ic('sparkle',14)+(imgEnhanced?' Revenir à l’image originale':' Améliorer le ticket')+'</button></div>'+
+    '</div>'+
     '<div class="export-bar"><p id="exportFilename"></p>'+
     '<button id="dlb" class="primary-btn" onclick="window._gen()">'+ic('save',16)+' Exporter l’image</button><button id="dlbpdf" class="sec-btn" onclick="window._genPDF()">'+ic('pdf',16)+' Exporter en PDF</button></div>';
   setupDragAndPinch();
@@ -489,6 +439,7 @@ function setupDragAndPinch(){
   function distance(p){return Math.hypot(p[1].x-p[0].x,p[1].y-p[0].y)}
   function angle(p){return Math.atan2(p[1].y-p[0].y,p[1].x-p[0].x)*180/Math.PI}
   container.onpointerdown=function(e){
+    if(ticket)ticket.placementTouched=true;
     if(!stamp.contains(e.target)&&points.size===0){points.set(e.pointerId,{x:e.clientX,y:e.clientY});container.setPointerCapture(e.pointerId);return}
     e.preventDefault();points.set(e.pointerId,{x:e.clientX,y:e.clientY});container.setPointerCapture(e.pointerId);
     if(points.size===2){var pair=two();gesture={distance:distance(pair),angle:angle(pair),scale:S.scale,rotation:S.rotation};offset=null}
@@ -512,20 +463,20 @@ function updateRotationInputs(){
 // ── FILE ──
 var MAX_PX=2400;
 async function resizeImage(source){
-  var image=await loadImage(source),ratio=Math.min(1,MAX_PX/Math.max(image.width,image.height));
+  var image=await loadImage(source),ratio=Math.min(1,MAX_PX/Math.max(image.width,image.height),Math.sqrt(4000000/(image.width*image.height)));
   var canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.width*ratio));canvas.height=Math.max(1,Math.round(image.height*ratio));
   var context=canvas.getContext('2d');context.fillStyle='#fff';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(image,0,0,canvas.width,canvas.height);
   return canvas.toDataURL('image/jpeg',.94);
 }
 function beginTicket(source,metadata){
-  if(ticket)ticket.cancel();ReceiptOCR.cancel();
+  if(ticket)ticket.cancel();ReceiptOCR.cancel();ReceiptImage.cancel();
   ticket=new Receipt.Session(++ticketSequence,source);var current=ticket;
   current.counterEvent=eventId();current.counted=false;
   current.pdfText=metadata&&metadata.text||'';current.pdfPage=metadata&&metadata.page||0;
-  img=imgFull=source;imgOriginal=null;imgEnhanced=false;ndfDate='';S.rotation=0;exportBusy=false;
-  var inset=current.pdfPage?0:5;
-  crop={x1:inset,y1:inset,x2:100-inset,y2:100-inset};sp={x:50,y:75};stampCache=null;
-  scr='crop';render();readTicketDate(current);
+  img=imgFull=source;ndfDate='';S.rotation=0;exportBusy=false;photoBusy=false;
+  current.imageMode='original';current.enhancementCache={};
+  crop=ReceiptPixels.fullFrame();cropEntry=null;cropDrag=null;cropRevision++;photoSequence++;sp={x:50,y:75};stampCache=null;
+  scr='crop';render();readTicketDate(current);if(!current.pdfPage)window._autoCrop(true);
 }
 function closePDFImport(){
   pdfPreviewSequence++;
@@ -662,7 +613,7 @@ function postSaveActions(){
   var wrap=document.createElement('div');wrap.id='postSaveWrap';wrap.innerHTML='<button class="sec-btn" onclick="window._go(\'home\')">Accueil</button><button class="primary-btn" onclick="window._cam()">Nouvelle photo</button>';bar.appendChild(wrap);
 }
 async function exportDocument(format){
-  if(exportBusy||!ticket||!img)return;
+  if(exportBusy||photoBusy||!ticket||!img)return;
   if(ticket.ocrStatus==="reading"&&ticket.dateSource!=="manual"){toast('Lecture en cours. Attendez ou saisissez la date.');document.getElementById('ndfDateIn').focus();return}
   if(!Receipt.validDate(ticket.date)){toast('Vérifiez la date du ticket avant de sauvegarder');document.getElementById('ndfDateIn').focus();return}
   var current=ticket,source=img,name=Receipt.filename(ticket.date,format);
@@ -688,30 +639,27 @@ window._genPDF=function(){return exportDocument('pdf')};
 
 // ── GLOBALS ──
 window._go=function(s){
-  if(s==='home'){importSequence++;if(ticket)ticket.cancel();ReceiptOCR.cancel();closePDFImport();}
+  if(s==='home'){importSequence++;cropRevision++;photoSequence++;if(ticket)ticket.cancel();ReceiptOCR.cancel();ReceiptImage.cancel();closePDFImport();photoBusy=false;cropEntry=null;cropDrag=null;}
   scr=s;render();
 };
 window._cam=function(){fileInput(true)};
 window._gal=function(){fileInput(false)};
 
-// Toggle image enhancement (contrast + brightness + sharpness)
-window._toggleEnhance=async function(){
-  var current=ticket;if(!current||current.cancelled)return;
-  if(imgEnhanced){img=current.original;current.image=img;current.enhanced=false;current.revision++;imgEnhanced=false;render();toast('Image originale restaurée');return}
-  var source=img,revision=++current.revision;
-  toast('Amélioration…');
+// Always process the unfiltered crop, with a cache for immediate comparisons.
+window._imageMode=async function(mode){
+  var current=ticket;if(photoBusy||!current||current.cancelled||!['original','readable','mono'].includes(mode))return;
+  if(current.imageMode===mode)return;
+  var revision=++current.revision,source=current.original,operation=++photoSequence;setPhotoBusy(true);
   try{
-    var image=await loadImage(source);if(ticket!==current||current.cancelled||revision!==current.revision)return;
-    var canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;
-    var context=canvas.getContext('2d');context.filter='contrast(1.25) brightness(1.08) saturate(1.05)';context.drawImage(image,0,0);context.filter='none';
-    var pixels=context.getImageData(0,0,image.width,image.height),data=pixels.data,original=new Uint8ClampedArray(data),w=image.width,h=image.height;
-    for(var y=1;y<h-1;y++)for(var x=1;x<w-1;x++)for(var channel=0;channel<3;channel++){
-      var index=(y*w+x)*4+channel,blur=(original[index-w*4]+original[index+w*4]+original[index-4]+original[index+4])/4;
-      data[index]=Math.min(255,Math.max(0,original[index]+.4*(original[index]-blur)));
-    }
-    context.putImageData(pixels,0,0);current.original=source;imgOriginal=source;
-    img=canvas.toDataURL('image/jpeg',.94);current.image=img;current.enhanced=true;imgEnhanced=true;render();toast('Image améliorée ✓');
-  }catch(error){toast('Amélioration impossible. Image conservée.')}
+    var result=mode==='original'?source:current.enhancementCache[mode]||await ReceiptImage.enhance(source,mode);
+    if(ticket!==current||current.cancelled||revision!==current.revision||scr!=='edit')return;
+    if(mode!=='original')current.enhancementCache[mode]=result;
+    current.imageMode=mode;current.image=result;current.enhanced=mode!=='original';img=result;
+    document.getElementById('ei').src=result;
+    document.querySelectorAll('#imageModes button').forEach(function(button){button.setAttribute('aria-pressed',String(button.dataset.mode===mode))});
+    if(!current.date&&current.dateSource!=='manual'){ReceiptOCR.cancel();readTicketDate(current)}
+  }catch(error){if(ticket===current&&!current.cancelled)toast('Traitement indisponible. Image conservée.')}
+  finally{if(ticket===current&&operation===photoSequence)setPhotoBusy(false)}
 };
 window._savestamp=function(){toast("Tampon sauvegardé ✓");scr="home";render()};
 function updateConfigPreview(){var preview=document.getElementById('stampPreview');if(preview)preview.innerHTML='<div class="stamp-config-paper">'+shtml(false)+'</div>'}
@@ -727,19 +675,18 @@ window._tvint=function(){S.vintage=!S.vintage;save();render()};
 window._sc=function(v){S.scale=Math.max(.3,Math.min(2.5,parseFloat(v)||1));save();updateConfigPreview()};
 window._tdate=function(){S.showDate=!S.showDate;save();render()};
 window._rot=function(v){S.rotation=Math.max(-180,Math.min(180,Number(v)||0));save();updateRotationInputs();updateStampOverlay()};
-window._moveStamp=function(event){var delta={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[event.key];if(!delta)return;event.preventDefault();sp.x+=delta[0]*(event.shiftKey?5:1);sp.y+=delta[1]*(event.shiftKey?5:1);updateStampOverlay();savePos()};
+window._moveStamp=function(event){var delta={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[event.key];if(!delta)return;event.preventDefault();if(ticket)ticket.placementTouched=true;sp.x+=delta[0]*(event.shiftKey?5:1);sp.y+=delta[1]*(event.shiftKey?5:1);updateStampOverlay();savePos()};
 window._setDate=function(v){if(!ticket)return;ticket.setDate(v);ndfDate=ticket.date;updateDateUI()};
 window._rotate90=async function(){
-  var current=ticket,source=imgFull;if(!current||current.cancelled)return;
+  var current=ticket,source=imgFull;if(photoBusy||!current||current.cancelled)return;
+  cropRevision++;var operation=++photoSequence;setPhotoBusy(true);
   try{
-    var image=await loadImage(source);if(ticket!==current||current.cancelled||imgFull!==source)return;
+    var image=await loadImage(source);if(ticket!==current||current.cancelled||imgFull!==source||scr!=='crop'||operation!==photoSequence)return;
     var canvas=document.createElement('canvas');canvas.width=image.height;canvas.height=image.width;
     var context=canvas.getContext('2d');context.translate(image.height,0);context.rotate(Math.PI/2);context.drawImage(image,0,0);
-    // Rotation changes framing only. Keep reading the original photo so that a
-    // quarter-turn cannot replace a correctly read date with a sideways OCR result.
-    imgFull=canvas.toDataURL('image/png');current.replaceImage(imgFull);img=imgFull;imgEnhanced=false;imgOriginal=null;
-    var inset=current.pdfPage?0:5;crop={x1:inset,y1:inset,x2:100-inset,y2:100-inset};scr='crop';render();toast('Rotation 90° ✓');
-  }catch(error){toast('Rotation impossible. Image conservée.')}
+    imgFull=canvas.toDataURL('image/png');crop=ReceiptPixels.rotateQuad(crop);cropDrag=null;scr='crop';render();
+  }catch(error){if(ticket===current&&!current.cancelled&&scr==='crop'&&operation===photoSequence)toast('Rotation impossible. Image conservée.')}
+  finally{if(ticket===current&&operation===photoSequence)setPhotoBusy(false)}
 };
 
 // ── SUCCESS ANIMATION ──

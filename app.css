@@ -66,11 +66,29 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 #exportFilename{font-size:11px;color:#c5bcb0;text-align:center;overflow-wrap:anywhere}
 #postSaveWrap{display:flex;gap:8px}
 .toast{max-width:calc(100vw - 24px);white-space:normal;text-align:center}
-.crop-stage{flex:1;min-height:0;padding:22px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.crop-stage{flex:1;min-height:0;padding:24px;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
 #cropBox{position:relative;line-height:0;max-width:100%;max-height:100%;width:fit-content}
-#cropImg{max-width:100%;max-height:calc(100dvh - 270px);width:auto;height:auto;display:block;border-radius:12px}
-.crop-handle{padding:0;cursor:move}
+#cropImg{max-width:100%;max-height:calc(100dvh - 290px);width:auto;height:auto;display:block;border-radius:0}
+#cropOverlay{position:absolute;inset:0;touch-action:none}
+#cropOverlay svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.crop-handle{width:44px;height:44px;display:grid;place-items:center;padding:0;cursor:move;border:0;background:transparent;box-shadow:none;transition:none;touch-action:none}
+.crop-handle span{display:block;width:19px;height:19px;background:var(--copper);border:2px solid white;border-radius:50%;box-shadow:0 1px 7px #0009;pointer-events:none}
+.crop-handle.dragging span{background:#edb28b;transform:scale(1.2)}
 .crop-handle:focus-visible{outline:3px solid #fff;outline-offset:3px}
+#cropLoupe{position:absolute;top:12px;width:110px;height:110px;border:2px solid var(--copper);border-radius:16px;box-shadow:0 5px 22px #0009;z-index:30;pointer-events:none}
+.crop-bar{padding:10px 16px max(14px,env(safe-area-inset-bottom));border-top:1px solid #ffffff12;flex-shrink:0;display:flex;flex-direction:column;gap:8px;background:var(--surface)}
+#cropStatus{font-size:12px;line-height:1.4;min-height:34px;text-align:center;color:#ded7ce}
+.crop-actions{display:flex;gap:8px}
+.crop-actions .sec-btn{flex:1;min-width:0;min-height:44px;padding:8px;font-size:13px;border-radius:10px}
+.crop-bar>.primary-btn{padding:12px;min-height:46px;border-radius:10px}
+.crop-skip{border:0;background:none;color:#bcb5ad;min-height:36px;font-size:12px;cursor:pointer}
+.photo-tools{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.photo-recrop{border:1px solid #494238;background:transparent;color:#edb28b;border-radius:10px;padding:8px 12px;min-height:42px;font-size:13px;cursor:pointer}
+.image-modes{display:flex;padding:3px;border:1px solid #494238;border-radius:10px;gap:2px;background:#ffffff03}
+.image-modes button{border:0;background:none;color:#ccc4bb;padding:7px 11px;min-height:36px;border-radius:7px;font-size:13px;cursor:pointer}
+.image-modes button[aria-pressed=true]{background:#bd805730;color:#ffe1c9}
+#photoStatus{font-size:12px;color:#ded7ce;text-align:center}
+@media(max-width:360px){.photo-recrop{padding:8px}.image-modes button{padding:7px 8px}}
 .cdot{min-width:40px;min-height:40px}
 .tog{min-height:28px}
 textarea{font-size:16px}

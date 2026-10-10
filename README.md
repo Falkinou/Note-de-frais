@@ -14,7 +14,10 @@
 - **Un seul parcours** : photo ou import → recadrage → positionnement du tampon → export PNG ou PDF
 - **Importer** : images ou PDF (25 Mo maximum), avec choix de la page pour les documents multipages
 - **Positionnement intelligent** : analyse la luminosité de l'image pour placer le tampon dans la zone la plus claire
-- **Recadrage proposé** : analyse des contours du ticket (algorithme Sobel), à vérifier et ajuster avec les poignées
+- **Recadrage proposé** : recherche du papier et vérification de ses quatre bords ; si la détection est incertaine, l’image entière est conservée
+- **Correction de perspective** : quatre coins indépendants redressent les photos prises de biais
+- Poignées tactiles de 44 px, loupe pendant le déplacement et ajustement au clavier
+- Rotation de la photo en conservant les coins ; recadrage réouvrable depuis le ticket, avec annulation possible
 - **Glisser-déposer** : déplacez le tampon avec le doigt
 - **Pinch-to-zoom** : redimensionnez le tampon à deux doigts
 - **Rotation à deux doigts** : tournez le tampon directement sur l'image
@@ -29,6 +32,7 @@
 - Une date unique suffisamment lisible préremplit le champ ; plusieurs dates ou une lecture incertaine demandent un choix
 - Les dates invalides et les lignes identifiées comme une expiration, une échéance ou une validité sont écartées
 - Saisie manuelle toujours disponible et prioritaire, même si la lecture se termine ensuite
+- Si la date n’est pas encore trouvée, nouvelle lecture après redressement ou amélioration de l’image
 - La date retenue sert au nom de fichier et, si activée, à la date imprimée sur le tampon
 - Chaque nouveau ticket repart avec une date vide ; la date doit être renseignée avant l'export
 
@@ -53,7 +57,10 @@ La proposition reste à vérifier : un ticket froissé, flou, peu contrasté ou 
 - Nom de fichier automatique : `NDF_JJMMAAAA.png`
 - Partage natif iOS/Android (Web Share API) ou téléchargement direct
 - Une annulation du partage conserve le ticket et n'incrémente pas le compteur
-- Filtre « Améliorer » : contraste +25%, luminosité +8%, netteté (unsharp mask)
+- Rendus **Original / Lisible / N&B** : compensation locale de l’éclairage, contraste doux et netteté limitée pour conserver les impressions pâles
+- Le N&B conserve des niveaux de gris ; aucun texte manquant n’est reconstitué
+- Les filtres partent toujours du recadrage sans filtre, avec retour immédiat à l’original
+- Les traitements photo sont exécutés dans un Web Worker local pour garder l’interface réactive
 
 ### Interface
 - Accueil « Cuivre » : fond sombre chaud, grand titre et actions compactes
@@ -111,6 +118,7 @@ npm ci --ignore-scripts
 npm test
 npm run test:counters
 npm run test:ocr
+npm run test:images
 python3 scripts/dev-server.py --port 8780
 ```
 
@@ -125,6 +133,8 @@ npm run vendor:pdf
 
 `npm test` couvre les dates, l'isolation des tickets, les annulations de partage, la géométrie du tampon et la synchronisation des compteurs. `npm run test:counters` vérifie la migration, les doublons, les accès concurrents, la persistance, les sauvegardes et les origines autorisées. `npm run test:ocr` exécute le vrai moteur sur huit tickets synthétiques (dates françaises, ISO, ambiguës, absentes ou invalides) ; ce jeu ne mesure pas la précision sur des photos réelles. Les résultats sont écrits dans `.test-output/ocr-results.json`.
 
+`npm run test:images` construit trois scènes connues (perspective, ombre, fond clair/foncé), mesure l’erreur des coins et exécute le vrai OCR après traitement. Les images avant/après et les résultats restent dans `.test-output/images/`. Les tests unitaires vérifient aussi les limites géométriques, la préservation de l’original, des impressions pâles et l’annulation des traitements tardifs.
+
 ---
 
 ## Stack technique
@@ -134,6 +144,7 @@ npm run vendor:pdf
 - `ocr.js` + `vendor/ocr/` : moteur Tesseract.js 7.0.0 et modèle français
 - `pdf-import.js` + `vendor/pdfjs/` : lecture et rendu local avec PDF.js 6.4.299
 - `counters.js` + `server/counters.py` : synchronisation anonyme et stockage SQLite sur le VPS
+- `image-processing.js`, `image-tools.js`, `image-worker.js` : détection, homographie, rééchantillonnage et amélioration locale, sans service distant ni génération d’image
 - `stamp-renderer.js` : rendu Canvas partagé entre aperçu et exports
 - `export-file.js` : partage, annulation et téléchargement
 - Web Share API pour la sauvegarde mobile
