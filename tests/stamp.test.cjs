@@ -24,7 +24,7 @@ test("composite ne fait subir la rotation qu’une seule fois", () => {
   assert.deepEqual(rotations, [Math.PI / 4]);
   assert.equal(draws.length, 1);
 });
-test("l’usure est déterministe et le fond transparent reste sans bordure", () => {
+test("l’usure est déterministe et le rectangle transparent reste sans bordure", () => {
   const runs = [];
   function canvas() {
     const events = [], pixels = new Uint8ClampedArray(80).fill(200);
@@ -40,4 +40,37 @@ test("l’usure est déterministe et le fond transparent reste sans bordure", ()
   create(settings, font, color, 123, canvas);
   assert.deepEqual(runs[0], runs[1]);
   assert.ok(!runs[0].includes("stroke") && !runs[0].includes("fill"));
+});
+
+test('un tampon rond transparent a un contour visible, sans disque opaque', () => {
+  const { createCanvas } = require('@napi-rs/canvas');
+  const font = { f: 'Arial', w: 700, w2: 600 }, color = { bg: '#ff8800', bd: '#ff8800', tx: '#111111' };
+  const settings = { ...base, address: '', date: '', shape: 'circle', noBg: true, textColor: '#123456' };
+  const stamp = create(settings, font, color, 123, () => createCanvas(1, 1)), ctx = stamp.getContext('2d');
+  assert.equal(stamp.width, stamp.height);
+  for (const [x, y] of [[400, 7], [793, 400], [400, 793], [7, 400]]) {
+    const pixel = Array.from(ctx.getImageData(x, y, 1, 1).data);
+    assert.deepEqual(pixel, [18, 52, 86, 255], 'le contour suit la couleur du texte');
+  }
+  for (const [x, y] of [[400, 400], [0, 0], [799, 799]]) assert.equal(ctx.getImageData(x, y, 1, 1).data[3], 0, 'papier apparent');
+  const filled = create({ ...settings, noBg: false }, font, color, 123, () => createCanvas(1, 1));
+  assert.equal(filled.getContext('2d').getImageData(400, 400, 1, 1).data[3], 255);
+});
+
+test('une adresse longue et la date tiennent dans un vrai cercle, avec ou sans texte en arc', () => {
+  const { createCanvas } = require('@napi-rs/canvas');
+  for (const arcText of [false, true]) {
+    const settings = { ...base, shape: 'circle', address: 'ENTREPRISE\n' + 'Adresse et mentions complémentaires\n'.repeat(14), arcText, noBg: true, bold: true, textColor: '#111111' };
+    const stamp = create(settings, { f: 'Arial', w: 700, w2: 600 }, { bg: '#fff', bd: '#111', tx: '#111' }, 123, () => createCanvas(1, 1));
+    const geometry = layout(settings, 1000, 1500);
+    assert.equal(stamp.width, 800); assert.equal(stamp.height, 800); assert.equal(geometry.width, geometry.height);
+    const pixels = stamp.getContext('2d').getImageData(0, 0, 800, 800).data;
+    let textPixels = 0;
+    for (let y = 0; y < 800; y++) for (let x = 0; x < 800; x++) {
+      if (!pixels[(y * 800 + x) * 4 + 3]) continue;
+      assert.ok(Math.hypot(x - 400, y - 400) <= 399, 'aucun texte ne sort du cercle');
+      if (Math.hypot(x - 400, y - 400) < 350) textPixels++;
+    }
+    assert.ok(textPixels > 1000, 'le contenu reste présent');
+  }
 });
