@@ -166,7 +166,7 @@ def legacy_bridge(store, url, stop):
     """Read-only bridge for installed 1.7 clients; new clients only contact the VPS."""
     while not stop.is_set():
         try:
-            request = urllib.request.Request(url, headers={"Accept": "application/json"})
+            request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "Stampfel/" + VERSION})
             with urllib.request.urlopen(request, timeout=5) as response:
                 payload = response.read(4096)
             store.observe_legacy(json.loads(payload)["count"])
