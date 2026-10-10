@@ -21,6 +21,15 @@ function ic(name,sz){
     check:'<polyline points="20 6 9 17 4 12"/>',
     back:'<path d="M19 12H5M12 19l-7-7 7-7"/>',
     edit:'<path d="M16 3l5 5L8 21H3v-5L16 3z"/><path d="M14 5l5 5"/>',
+    warning:'<path d="M12 3L2 21h20L12 3zM12 9v5M12 17v.1"/>',
+    clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    layers:'<path d="M12 3L2 8l10 5 10-5-10-5zM2 12l10 5 10-5M2 16l10 5 10-5"/>',
+    rectangle:'<rect x="3" y="6" width="18" height="12" rx="2"/>',
+    circle:'<circle cx="12" cy="12" r="9"/>',
+    arc:'<path d="M3 17a9 9 0 0 1 18 0M7 11V6m5 2V3m5 8V6"/>',
+    type:'<path d="M3 5h18M12 5v16M8 21h8"/>',
+    bold:'<path d="M6 3h7a4 4 0 0 1 0 8H6V3zm0 8h8a5 5 0 0 1 0 10H6V11z"/>',
+    texture:'<path d="M4 4h5M15 4h5v5M20 15v5h-5M9 20H4v-5M4 9v1M10 8l1 1M15 12h1M9 15h1"/>',
     import:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-7M9 14l3-3 3 3"/>'
   };
   return s+(paths[name]||'')+'</svg>';
@@ -91,6 +100,7 @@ function incCount(current){
   void counters.record(current.counterEvent);
 }
 window.addEventListener('online',function(){void counters.sync()});
+document.addEventListener('visibilitychange',function(){if(!document.hidden)void counters.sync()});
 window.addEventListener('storage',function(event){if(event.key===StampfelCounters.KEY)counters.refresh()});
 function savePos(){try{localStorage.setItem("ndf_lastpos",JSON.stringify(sp))}catch(e){}queueDraft()}
 
@@ -161,46 +171,63 @@ function updateStampOverlay(){
 function loadImage(source){return new Promise(function(resolve,reject){
   var image=new Image();image.onload=function(){resolve(image)};image.onerror=function(){reject(new Error("Image illisible ou format non pris en charge"))};image.src=source;
 })}
+function dateState(){
+  if(ticket.dateSource==='manual')return {key:'manual',icon:'edit',label:ticket.date?'Date modifiée':'Date à renseigner'};
+  if(ticket.reading&&ticket.ocrStatus==='missing')return {key:'reading',icon:'clock',label:'Lecture en cours'};
+  var states={reading:['clock','Lecture en cours'],found:['check','Date détectée'],ambiguous:['layers','Plusieurs dates'],uncertain:['warning','Date à confirmer'],missing:['calendar','Date à renseigner'],error:['warning','Lecture à relancer']};
+    var state=states[ticket.ocrStatus]||states.missing;return {key:ticket.ocrStatus,icon:state[0],label:state[1]};
+}
 function updateDateUI(){
   if(!ticket)return;
   ndfDate=ticket.date;
-  var input=document.getElementById("ndfDateIn");
-  if(input&&document.activeElement!==input)input.value=ndfDate;
-  var status=document.getElementById("dateStatus"),choices=document.getElementById("dateChoices");
-  var messages={uncertain:"Date peu lisible : confirmez la proposition ou saisissez-la.",reading:"Lecture de la date sur le ticket…",found:"Date lue sur le ticket · à vérifier",ambiguous:"Plusieurs dates trouvées : choisissez celle du ticket.",missing:"Aucune date trouvée. Saisissez la date du ticket.",error:"Lecture indisponible. Saisissez la date ou réessayez."};
-  if(status)status.textContent=ticket.dateSource==="manual"?"Date renseignée manuellement":messages[ticket.ocrStatus]||"";
+  var input=document.getElementById('ndfDateIn');if(input&&document.activeElement!==input)input.value=ndfDate;
+  var state=dateState(),status=document.getElementById('dateStatus');
+  var times=ticket.times.filter(function(time){return !time.date||time.date===ticket.date});
+  var timeLabel=ticket.timeStatus==='ambiguous'?' · Heures à vérifier':times.length===1?' · '+times[0].time:'';
+  if(status){status.innerHTML=ic(state.icon,13)+'<span>'+esc(state.label+timeLabel)+'</span>';status.dataset.state=state.key}
+  document.querySelectorAll('[data-meal]').forEach(function(button){button.setAttribute('aria-pressed',String(button.dataset.meal===ticket.meal))});
+  var choices=document.getElementById('dateChoices');
   if(choices){
     choices.replaceChildren();
-    if(ticket.dateSource!=="manual"&&(ticket.ocrStatus==="ambiguous"||ticket.ocrStatus==="uncertain"))ticket.candidates.forEach(function(candidate){
-      var button=document.createElement("button");button.type="button";button.className="sec-btn date-choice";
-      button.textContent=Receipt.displayDate(candidate.iso);button.title=candidate.evidence;
-      button.onclick=function(){window._setDate(candidate.iso);updateDateUI()};choices.appendChild(button);
-    });
-    if(ticket.dateSource!=="manual"&&ticket.ocrStatus==="found"&&ticket.candidates[0]){
-      var evidence=document.createElement("small");evidence.textContent=ticket.candidates[0].evidence;choices.appendChild(evidence);
+    function addProof(candidate,kind){
+      var card=document.createElement('article');card.className='reading-proof';card.dataset.uncertain=String(candidate.confidence<75);
+      var label=kind==='date'?Receipt.displayDate(candidate.iso):candidate.time;
+      var header=document.createElement('header');header.innerHTML='<span>'+ic(kind==='date'?'calendar':'clock',15)+' '+(kind==='date'?'Date':'Heure')+'</span><strong>'+esc(label)+'</strong>';card.appendChild(header);
+      if(candidate.preview&&/^data:image\/png;base64,/.test(candidate.preview)){var image=document.createElement('img');image.src=candidate.preview;image.alt='Extrait du ticket : '+label;card.appendChild(image)}
+      var context=document.createElement('small');context.textContent=(candidate.confidence<75?'Lecture incertaine · ':'')+candidate.evidence;card.appendChild(context);
+      if(kind==='date'&&(ticket.date!==candidate.iso||ticket.ocrStatus==='uncertain')||kind==='time'&&candidate.confidence<75){
+        var button=document.createElement('button');button.type='button';button.className='sec-btn';button.textContent=kind==='date'?'Utiliser cette date':candidate.meal?'Confirmer '+candidate.meal:'Confirmer sans repas';
+        button.onclick=function(){if(kind==='date')window._setDate(candidate.iso);else window._setMeal(candidate.meal)};card.appendChild(button);
+      }
+      choices.appendChild(card);
     }
+    ticket.candidates.forEach(function(candidate){addProof(candidate,'date')});
+    var allTimes=ticket.timeCandidates.length?ticket.timeCandidates:ticket.times,matchingTimes=allTimes.filter(function(time){return !ticket.date||!time.date||time.date===ticket.date});
+    (matchingTimes.length?matchingTimes:allTimes).forEach(function(candidate){addProof(candidate,'time')});
+    var detail=document.getElementById('dateDetailStatus');if(detail)detail.textContent=state.label+(ticket.reading?' · Recherche de la date et de l’heure…':!ticket.times.length?' · Heure non détectée : choisissez le repas si nécessaire.':ticket.timeStatus==='ambiguous'?' · Les heures donnent des repas différents. À vous de choisir.':' · Vérifiez les extraits du ticket.');
+    var retry=document.getElementById('retryDate');if(retry)retry.disabled=!!ticket.reading;
   }
-  var retry=document.getElementById("retryDate");if(retry)retry.hidden=ticket.ocrStatus==="reading";
-  var meal=document.getElementById('mealSelect');if(meal)meal.value=ticket.meal;
-  var times=ticket.times.filter(function(time){return !time.date||time.date===ticket.date});
-  if(status&&ticket.ocrStatus==='found'&&ticket.dateSource!=='manual')status.textContent='Date lue · à vérifier';
-  if(status&&ticket.mealSource==='manual')status.textContent+=' · Repas corrigé';
-  else if(status&&times.length&&ticket.timeStatus==='found')status.textContent+=' · '+times.map(function(t){return t.time}).join(', ');
-  else if(status&&ticket.timeStatus==='ambiguous')status.textContent='Heures différentes · choisissez midi ou soir';
-  var name=document.getElementById("exportFilename");if(name)name.textContent=fname();
+  var name=document.getElementById('exportFilename');if(name)name.textContent=fname();
   updateStampOverlay();queueDraft();queueMarginRefresh();
 }
 function needsReading(current){return !current.date&&current.dateSource!=='manual'||!current.times.length&&current.mealSource!=='manual'}
 async function readTicketDate(current){
   var revision=current.ocrRevision=(current.ocrRevision||0)+1;
-  current.ocrStatus="reading";updateDateUI();
+  current.ocrStatus='reading';current.reading=true;updateDateUI();
+  function live(){return ticket===current&&!current.cancelled&&current.ocrRevision===revision}
+  function apply(result){if(live()){current.applyOCR(result);updateDateUI()}}
   try{
-    var result=current.pdfText?Receipt.extractDetails(current.pdfText):null;
-    if(!result||result.status==='missing')result=await ReceiptOCR.recognize(current.processed||current.image);
-    if(ticket!==current||current.cancelled||current.ocrRevision!==revision)return;
-    current.applyOCR(result);
-  }catch(error){if(ticket!==current||current.cancelled||current.ocrRevision!==revision)return;current.applyOCR({status:"error",candidates:[]})}
-  updateDateUI();
+    var source=current.processed||current.image;
+    var native=current.pdfText?await ReceiptOCR.proof(ReceiptReading.analyze(current.pdfTextLines||[],current.pdfText,100),current.original):null;
+    if(native)apply(native);
+    var result=native;
+    if(!native||ReceiptReading.needsRefinement(native)){
+      var scanned=await ReceiptOCR.recognize(source,{onProgress:function(partial){apply(native?ReceiptReading.merge(native,partial):partial)}});
+      result=native?ReceiptReading.merge(native,scanned):scanned;
+    }
+    if(!live())return;current.applyOCR(result);
+  }catch(error){if(!live())return;if(!current.candidates.length)current.applyOCR({status:'error',candidates:[]})}
+  if(live()){current.reading=false;updateDateUI()}
 }
 window._retryDate=function(){if(!ticket)return;ReceiptOCR.cancel();readTicketDate(ticket)};
 function toast(m){clearTimeout(tt);var t=document.getElementById("toast");t.textContent=m;t.style.display="block";tt=setTimeout(function(){t.style.display="none"},2400)}
@@ -237,10 +264,12 @@ function renderHome(el){
     '<section class="home-actions" aria-labelledby="newTicketTitle"><h2 id="newTicketTitle">Nouveau ticket</h2>'+
       '<button type="button" class="primary-btn home-photo" onclick="window._cam()">'+ic('camera',22)+'Photographier un ticket</button>'+
       '<button type="button" class="home-import" onclick="window._gal()" aria-label="Importer une image ou un PDF">'+ic('import',22)+'Importer</button></section>'+
-    '<dl class="home-stats" aria-label="Tickets traités"><div><dd id="personalCounter">—</dd><dt>personnel</dt></div><div><dd id="globalCounter">—</dd><dt>communauté</dt></div></dl>'+
+    '<dl class="home-stats" aria-label="Tickets traités"><div><dd id="personalCounter">—</dd><dt>Sur cet appareil</dt></div><div><dd id="globalCounter">—</dd><dt>communauté</dt></div></dl>'+
     '<div id="resumeCard" class="resume-card" '+(resumable?'':'hidden')+'><button type="button" onclick="window._resumeDraft()">Reprendre le ticket</button><button type="button" onclick="window._discardDraft()" aria-label="Effacer le ticket en attente">Effacer</button></div>'+
+    '<button id="offlineIndicator" type="button" class="offline-indicator" onclick="window._options()"></button>'+
     '<button type="button" class="home-options" onclick="window._options()">Options</button>'+
     '</main>';
+  updateOfflineUI(StampfelOffline.snapshot());
   updateCounters(counters.snapshot());
   void counters.sync();
   stampFontReady().then(function(){if(scr==='home'){var preview=document.querySelector('.home-stamp-paper img');if(preview)preview.src=stampLayer(true).url}});
@@ -249,17 +278,17 @@ function renderHome(el){
 // ── STAMP CONFIG ──
 function renderStamp(el){
   var h='<div class="hdr"><span class="htitle">Mon Tampon</span>';
-  h+='<button class="glass-btn" style="width:auto;padding:8px 18px;font-size:13px;gap:6px" onclick="window._savestamp()">✓ Sauvegarder</button></div>';
+  h+='<button class="glass-btn" style="width:auto;padding:8px 18px;font-size:13px;gap:6px" onclick="window._savestamp()">'+ic('check',16)+' Sauvegarder</button></div>';
   h+='<div class="scr" style="padding:20px;display:flex;flex-direction:column;gap:20px;padding-bottom:40px">';
   var prevBg="background:#f4f2eb;border-radius:16px;padding:16px;max-width:100%;";
   h+='<div id="stampPreview" style="display:flex;justify-content:center;padding:24px 0;animation:fadeUp .4s ease"><div style="'+prevBg+'">'+shtml(false)+'</div></div>';
   h+='<div class="glass" style="padding:16px"><label class="lbl" for="addr">Adresse</label>';
   h+='<textarea id="addr" rows="4" maxlength="500" oninput="window._addr(this.value)">'+esc(S.address)+'</textarea></div>';
   h+='<div class="glass" style="padding:16px"><div class="lbl">Forme</div><div style="display:flex;gap:10px">';
-  h+='<button class="shape-btn '+(S.shape==="rect"?"active":"")+'" onclick="window._shape(\'rect\')">▬ Rectangle</button>';
-  h+='<button class="shape-btn '+(S.shape==="circle"?"active":"")+'" onclick="window._shape(\'circle\')">● Cercle</button>';
+  h+='<button class="shape-btn '+(S.shape==="rect"?"active":"")+'" onclick="window._shape(\'rect\')">'+ic('rectangle',16)+' Rectangle</button>';
+  h+='<button class="shape-btn '+(S.shape==="circle"?"active":"")+'" onclick="window._shape(\'circle\')">'+ic('circle',16)+' Cercle</button>';
   h+='</div>';
-  if(S.shape==="circle"){h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">⭕ Texte en arc de cercle</div><div style="font-size:11px;color:rgba(255,255,255,.75)">Texte qui suit la courbure</div></div>'+togHTML("window._tarc()",S.arcText,"Texte en arc de cercle")+'</div>'}
+  if(S.shape==="circle"){h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">'+ic('arc',16)+' Texte en arc de cercle</div><div style="font-size:11px;color:rgba(255,255,255,.75)">Texte qui suit la courbure</div></div>'+togHTML("window._tarc()",S.arcText,"Texte en arc de cercle")+'</div>'}
   h+='</div>';
   h+='<div class="glass" style="padding:16px"><div class="lbl">Couleur du fond</div><div style="display:flex;gap:12px;flex-wrap:wrap">';
   for(var i=0;i<SC.length;i++){var act=i===S.colorIdx;var shd=act?"0 0 20px "+SC[i].bd+",0 2px 10px rgba(0,0,0,.3)":"0 2px 10px rgba(0,0,0,.3)";
@@ -267,23 +296,23 @@ function renderStamp(el){
   h+='</div></div>';
   h+='<div class="glass" style="padding:16px"><div style="display:flex;align-items:center;justify-content:space-between"><div><div style="font-size:14px;font-weight:600;color:#fff">Fond transparent</div><div style="font-size:12px;color:rgba(255,255,255,.75)">Texte seul</div></div>'+togHTML("window._tnobg()",S.noBg,"Fond transparent")+'</div></div>';
   h+='<div class="glass" style="padding:16px"><div class="lbl">Couleur du texte</div><div style="display:flex;gap:10px;flex-wrap:wrap">';
-  for(var j=0;j<TC.length;j++){var ta=S.textColor===TC[j].v;var tsb=ta?"0 0 16px rgba(249,115,22,.5),0 2px 8px rgba(0,0,0,.3)":(TC[j].v==="#111111"?"inset 0 0 0 1px rgba(255,255,255,.15),0 2px 8px rgba(0,0,0,.3)":"0 2px 8px rgba(0,0,0,.3)");
-    h+='<button type="button" aria-label="Texte '+TC[j].n+'" aria-pressed="'+ta+'" class="cdot" style="width:30px;height:30px;background:'+TC[j].v+";border-color:"+(ta?"#fb923c":"transparent")+";transform:scale("+(ta?1.15:1)+");box-shadow:"+tsb+'" onclick="window._tc(\''+TC[j].v+'\')" title="'+TC[j].n+'"></button>';}
+  for(var j=0;j<TC.length;j++){var ta=S.textColor===TC[j].v;var tsb=ta?"0 0 16px rgba(189,128,87,.5),0 2px 8px rgba(0,0,0,.3)":(TC[j].v==="#111111"?"inset 0 0 0 1px rgba(255,255,255,.15),0 2px 8px rgba(0,0,0,.3)":"0 2px 8px rgba(0,0,0,.3)");
+    h+='<button type="button" aria-label="Texte '+TC[j].n+'" aria-pressed="'+ta+'" class="cdot" style="width:30px;height:30px;background:'+TC[j].v+";border-color:"+(ta?"var(--copper)":"transparent")+";transform:scale("+(ta?1.15:1)+");box-shadow:"+tsb+'" onclick="window._tc(\''+TC[j].v+'\')" title="'+TC[j].n+'"></button>';}
   h+='</div></div>';
   // Font picker
-  h+='<div class="glass" style="padding:16px"><div class="lbl">🔤 Police</div>';
+  h+='<div class="glass" style="padding:16px"><div class="lbl">'+ic('type',16)+' Police</div>';
   h+='<div style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto;padding:4px 0">';
   for(var fi=0;fi<FONTS.length;fi++){
     var isAct=fi===(S.fontIdx||0);
-    h+='<button type="button" aria-pressed="'+isAct+'" onclick="window._setFont('+fi+')" style="cursor:pointer;padding:10px 12px;border-radius:10px;border:1.5px solid '+(isAct?"#fb923c":"rgba(255,255,255,.08)")+";background:"+(isAct?"rgba(249,115,22,.12)":"rgba(255,255,255,.03)")+';display:flex;align-items:center;justify-content:space-between;transition:all .2s">';
+    h+='<button type="button" aria-pressed="'+isAct+'" onclick="window._setFont('+fi+')" style="cursor:pointer;padding:10px 12px;border-radius:10px;border:1.5px solid '+(isAct?"var(--copper)":"rgba(255,255,255,.08)")+";background:"+(isAct?"rgba(189,128,87,.12)":"rgba(255,255,255,.03)")+';display:flex;align-items:center;justify-content:space-between;transition:all .2s">';
     h+='<span style="font-family:'+esc(FONTS[fi].f)+";font-weight:"+FONTS[fi].w+';font-size:13px;color:#fff">'+FONTS[fi].n+'</span>';
-    if(isAct)h+='<span style="color:#fb923c;font-size:14px">✓</span>';
+    if(isAct)h+='<span style="color:var(--copper);font-size:14px">'+ic('check',14)+'</span>';
     h+='</button>';
   }
   h+='</div></div>';
   // Bold toggle
-  h+='<div class="glass" style="padding:16px"><div style="display:flex;align-items:center;justify-content:space-between"><div><div style="font-size:14px;font-weight:600;color:#fff;display:flex;align-items:center;gap:8px"><span style="font-weight:800;font-size:18px;font-family:\'Space Grotesk\',sans-serif">B</span> Texte en gras</div><div style="font-size:12px;color:rgba(255,255,255,.85)">'+(S.bold?"Police épaisse":"Police fine")+'</div></div>'+togHTML("window._tbold()",S.bold,"Texte en gras")+'</div></div>';
-  h+='<div class="glass" style="padding:16px"><div style="display:flex;align-items:center;justify-content:space-between"><div><div style="font-size:14px;font-weight:600;color:#fff">🏚️ Effet usé / vintage</div><div style="font-size:12px;color:rgba(255,255,255,.85)">'+(S.vintage?"Tampon vieilli":"Tampon net")+'</div></div>'+togHTML("window._tvint()",S.vintage,"Effet usé ou vintage")+'</div></div>';
+  h+='<div class="glass" style="padding:16px"><div style="display:flex;align-items:center;justify-content:space-between"><div><div style="font-size:14px;font-weight:600;color:#fff;display:flex;align-items:center;gap:8px">'+ic('bold',18)+' Texte en gras</div><div style="font-size:12px;color:rgba(255,255,255,.85)">'+(S.bold?"Police épaisse":"Police fine")+'</div></div>'+togHTML("window._tbold()",S.bold,"Texte en gras")+'</div></div>';
+  h+='<div class="glass" style="padding:16px"><div style="display:flex;align-items:center;justify-content:space-between"><div><div style="font-size:14px;font-weight:600;color:#fff">'+ic('texture',16)+' Effet usé / vintage</div><div style="font-size:12px;color:rgba(255,255,255,.85)">'+(S.vintage?"Tampon vieilli":"Tampon net")+'</div></div>'+togHTML("window._tvint()",S.vintage,"Effet usé ou vintage")+'</div></div>';
   h+='<div class="glass" style="padding:16px"><div class="lbl">Taille</div><div style="display:flex;align-items:center;gap:12px"><span style="font-size:16px;opacity:.5">A</span><input aria-label="Taille du tampon" type="range" min="0.6" max="1.6" step="0.05" value="'+S.scale+'" oninput="window._sc(this.value)" style="flex:1"><span style="font-size:26px;font-weight:700">A</span></div></div>';
   h+='<div class="glass" style="padding:16px"><div style="display:flex;align-items:center;justify-content:space-between"><div><div style="font-size:14px;font-weight:600;color:#fff">Afficher la date</div><div style="font-size:12px;color:rgba(255,255,255,.75)">'+(dateStr()||'Date lue ou saisie sur le ticket')+'</div></div>'+togHTML("window._tdate()",S.showDate,"Afficher la date du ticket")+'</div></div>';
   h+='</div>';
@@ -306,7 +335,7 @@ function renderCrop(el){
 function setupCrop(){
   var box=document.getElementById('cropBox'),overlay=document.getElementById('cropOverlay');
   var names=['supérieur gauche','supérieur droit','inférieur droit','inférieur gauche'];
-  overlay.innerHTML='<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path id="cropShade" fill="rgba(0,0,0,.6)" fill-rule="evenodd"></path><polygon id="cropPolygon" fill="transparent" stroke="#edb28b" stroke-width="2" vector-effect="non-scaling-stroke"></polygon></svg>'+names.map(function(name,i){return '<button type="button" class="crop-handle" data-corner="'+i+'" aria-label="Recadrage : coin '+name+', flèches pour déplacer"><span></span></button>'}).join('');
+  overlay.innerHTML='<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path id="cropShade" fill="rgba(0,0,0,.6)" fill-rule="evenodd"></path><path id="cropGrid" fill="none" stroke="#1b1612" stroke-opacity=".55" stroke-width="1" vector-effect="non-scaling-stroke"></path><polygon id="cropPolygon" fill="transparent" stroke="#edb28b" stroke-width="2" vector-effect="non-scaling-stroke"></polygon></svg>'+names.map(function(name,i){return '<button type="button" class="crop-handle" data-corner="'+i+'" aria-label="Recadrage : coin '+name+', flèches pour déplacer"><span></span></button>'}).join('');
   drawCropUI();
   var cropImage=document.getElementById('cropImg'),stage=document.querySelector('.crop-stage');
   function fitCrop(){if(!cropImage.naturalWidth)return;var ratio=Math.min((stage.clientWidth-48)/cropImage.naturalWidth,(stage.clientHeight-48)/cropImage.naturalHeight);cropImage.style.width=Math.max(1,cropImage.naturalWidth*ratio)+'px';cropImage.style.height=Math.max(1,cropImage.naturalHeight*ratio)+'px'}
@@ -317,7 +346,7 @@ function setupCrop(){
     e.preventDefault();cropRevision++;
     var corner=Number(handle.dataset.corner),pointer=position(e);
     cropDrag={corner:corner,pointer:e.pointerId,offset:{x:crop[corner].x-pointer.x,y:crop[corner].y-pointer.y}};
-    overlay.setPointerCapture(e.pointerId);handle.classList.add('dragging');drawCropLoupe(corner);
+    overlay.setPointerCapture(e.pointerId);overlay.classList.add('adjusting');handle.classList.add('dragging');drawCropLoupe(corner);
   });
   overlay.addEventListener('pointermove',function(e){
     if(!cropDrag||e.pointerId!==cropDrag.pointer)return;e.preventDefault();
@@ -325,7 +354,7 @@ function setupCrop(){
   });
   function finish(e){
     if(!cropDrag||e.pointerId!==cropDrag.pointer)return;
-    cropDrag=null;overlay.querySelectorAll('.dragging').forEach(function(handle){handle.classList.remove('dragging')});
+    cropDrag=null;overlay.classList.remove('adjusting');overlay.querySelectorAll('.dragging').forEach(function(handle){handle.classList.remove('dragging')});
     var loupe=document.getElementById('cropLoupe');if(loupe)loupe.hidden=true;
   }
   overlay.addEventListener('pointerup',finish);overlay.addEventListener('pointercancel',finish);overlay.addEventListener('lostpointercapture',finish);
@@ -345,6 +374,8 @@ function drawCropUI(){
   var overlay=document.getElementById('cropOverlay');if(!overlay)return;
   var path=crop.map(function(p){return p.x+','+p.y}).join(' ');
   overlay.querySelector('#cropPolygon').setAttribute('points',path);
+  function between(a,b,t){return (a.x+(b.x-a.x)*t)+','+(a.y+(b.y-a.y)*t)}
+  overlay.querySelector('#cropGrid').setAttribute('d',[1/3,2/3].map(function(t){return 'M'+between(crop[0],crop[1],t)+'L'+between(crop[3],crop[2],t)+'M'+between(crop[0],crop[3],t)+'L'+between(crop[1],crop[2],t)}).join(' '));
   overlay.querySelector('#cropShade').setAttribute('d','M0 0H100V100H0Z M'+crop.map(function(p){return p.x+' '+p.y}).join('L')+'Z');
   overlay.querySelectorAll('[data-corner]').forEach(function(handle){var p=crop[Number(handle.dataset.corner)];handle.style.left=p.x+'%';handle.style.top=p.y+'%'});
 }
@@ -413,7 +444,7 @@ function renderEdit(el){
     '<div class="editor-content"><div class="glass image-panel"><div id="ic"><img id="ei" alt="Ticket à tamponner, touchez pour agrandir" src="'+img+'" draggable="false"><button type="button" id="sd" aria-label="Déplacer le tampon avec les flèches du clavier" onkeydown="window._moveStamp(event)"><img alt="" draggable="false"></button></div><button id="photoHints" class="photo-hint" onclick="window._adjust()" hidden></button></div>'+
     '<div class="photo-tools">'+photoTools+'</div><p id="photoStatus" role="status" hidden></p>'+
     '<div class="stamp-actions"><span>Glissez · Pincez le tampon</span><button type="button" onclick="window._adjust()">Ajuster '+ic('edit',13)+'</button></div>'+
-    '<div class="date-panel"><div class="date-labels"><label for="ndfDateIn">Date du ticket</label><label for="mealSelect">Repas</label></div><div class="date-fields"><input id="ndfDateIn" type="date" value="'+ndfDate+'" oninput="window._setDate(this.value)" aria-describedby="dateStatus"><select id="mealSelect" aria-label="Repas" onchange="window._setMeal(this.value)"><option value="">—</option><option value="midi">Midi</option><option value="soir">Soir</option></select></div><div class="date-reading"><p id="dateStatus" role="status" aria-live="polite"></p><button type="button" onclick="window._dateDetails()" aria-label="Vérifier la lecture de la date et de l’heure">'+ic('search',15)+'</button></div></div>'+
+    '<div class="date-panel"><div class="date-fields"><label for="ndfDateIn">Date du ticket</label><div class="date-entry"><input id="ndfDateIn" type="date" value="'+ndfDate+'" oninput="window._setDate(this.value)" aria-describedby="dateStatus"><div class="meal-choices" role="group" aria-label="Repas">'+[['','Aucun'],['midi','Midi'],['soir','Soir']].map(function(meal){return '<button type="button" data-meal="'+meal[0]+'" aria-pressed="'+(ticket.meal===meal[0])+'" onclick="window._setMeal(this.dataset.meal)">'+meal[1]+'</button>'}).join('')+'</div></div></div><div class="date-reading"><p id="dateStatus" role="status" aria-live="polite"></p><button type="button" onclick="window._dateDetails()" aria-label="Vérifier la lecture de la date et de l’heure">'+ic('search',16)+'</button></div></div>'+
     '</div><div class="export-bar compact-export"><p id="exportFilename"></p><div class="export-buttons">'+
     '<button id="dlb" class="sec-btn" onclick="window._gen()">'+ic('image',16)+' Image</button><button id="dlbpdf" class="primary-btn" onclick="window._genPDF()">'+ic('pdf',16)+' '+(ticket.pdf?'PDF complet':'PDF')+'</button></div></div>';
   setupDragAndPinch();
@@ -463,7 +494,7 @@ function beginTicket(source,metadata){
   ticket=new Receipt.Session(++ticketSequence,source);var current=ticket;
   current.counterEvent=eventId();current.counted=false;
   clearTimeout(draftTimer);void localStore.clearDraft().catch(function(){});resumable=null;
-  current.pdfText=metadata&&metadata.text||'';current.pdfPage=metadata&&metadata.page||0;current.pdf=metadata&&metadata.pdf||null;
+  current.pdfText=metadata&&metadata.text||'';current.pdfTextLines=metadata&&metadata.textLines||[];current.pdfPage=metadata&&metadata.page||0;current.pdf=metadata&&metadata.pdf||null;
   img=imgFull=source;ndfDate='';S.rotation=0;exportBusy=false;photoBusy=false;
   current.imageMode='original';current.enhancementCache={};current.processed=source;current.margin=false;current.marginHeight=0;
   crop=ReceiptPixels.fullFrame();cropEntry=null;cropDrag=null;cropRevision++;photoSequence++;sp={x:50,y:75};stampCache=null;
@@ -648,7 +679,22 @@ function sheet(title,content){
   dialog.onclose=function(){dialog.remove();if(focus&&focus.isConnected)focus.focus()};return dialog;
 }
 function resumeControl(){return '<label class="resume-toggle"><input type="checkbox" '+(resumeEnabled?'checked':'')+' onchange="window._toggleResume(this.checked)"><span>Reprendre après une fermeture<small>Sur cet appareil, pendant 24 h. Effacé après export.</small></span></label>'}
-window._options=function(){sheet('Options',resumeControl()+'<p class="version-info">Stampfel 1.10.0 · '+(navigator.onLine?'En ligne':'Hors ligne')+'</p>')};
+function offlineLabel(state){
+  if(state.status==='ready')return 'Prêt hors ligne';
+  if(state.status==='preparing')return 'Préparation hors ligne'+(state.total?' · '+Math.min(99,Math.floor(state.completed/state.total*100))+' %':'…');
+  return state.status==='updating'?'Mise à jour disponible':state.status==='unavailable'?'Hors ligne indisponible':'Hors ligne à préparer';
+}
+function updateOfflineUI(state){
+  var indicator=document.getElementById('offlineIndicator');if(indicator)indicator.innerHTML=ic(state.status==='ready'?'check':'download',13)+esc(offlineLabel(state));
+  var panel=document.getElementById('offlineDetail');if(panel){
+    var ready=state.status==='ready',preparing=state.status==='preparing';
+    panel.innerHTML='<strong>'+ic(ready?'check':preparing?'download':'warning',17)+esc(offlineLabel(state))+'</strong><p>'+(ready?'Photo, lecture date/heure, PDF et export disponibles sur cet appareil.':preparing?'Téléchargement des outils de lecture et des polices. Vous pouvez déjà utiliser Stampfel.':'Reconnectez-vous pour terminer la préparation sur cet appareil.')+'</p>'+
+      (preparing?'<progress aria-label="Préparation hors ligne" max="'+(state.total||1)+'" value="'+state.completed+'"></progress>':'')+
+      (!ready&&!preparing?'<button type="button" class="sec-btn" onclick="StampfelOffline.retry()">Réessayer</button>':'')+
+      '<p class="version-info">'+(navigator.onLine?'Connexion disponible':'Sans connexion')+' · Les compteurs se synchronisent au retour du réseau.</p>';
+  }
+}
+window._options=function(){sheet('Options','<div id="offlineDetail" class="offline-detail" role="status"></div>'+resumeControl()+'<p class="version-info">Stampfel '+esc(StampfelOffline.version)+'</p>');updateOfflineUI(StampfelOffline.snapshot())};
 window._adjust=function(){
   if(!ticket||photoBusy||exportBusy)return;
   var content='',labels={blur:'La photo semble floue. Vérifiez les petits caractères.',edges:'Du contenu est proche du cadre. Vérifiez les bords.',glare:'Un reflet est possible. Vérifiez que le texte reste lisible.',dark:'La photo est très sombre. Essayez le rendu Lisible ou une nouvelle photo.'};
@@ -664,13 +710,13 @@ window._adjust=function(){
   content+=resumeControl();sheet(scr==='edit'?'Ajuster le tampon':'Vérifier la photo',content);
 };
 window._dateDetails=function(){
-  sheet('Date et repas','<p class="sheet-note">Midi : 10 h à 14 h. Soir : 18 h à minuit.</p><div id="dateChoices"></div><button type="button" class="sec-btn" onclick="this.closest(\'dialog\').close();window._retryDate()">Relire la date et l’heure</button>');updateDateUI();
+  sheet('Date et repas','<p id="dateDetailStatus" class="date-detail-status" role="status"></p><div id="dateChoices"></div><p class="sheet-note">Midi : 10 h à 14 h. Soir : 18 h à minuit.</p><button type="button" id="retryDate" class="sec-btn" onclick="window._retryDate()">Relire la date et l’heure</button>');updateDateUI();
 };
 window._editorScale=function(value){S.scale=Math.max(.3,Math.min(2.5,Number(value)||1));ticket.placementTouched=true;save();updateStampOverlay();queueMarginRefresh();queueDraft()};
 window._editorShowDate=function(value){S.showDate=value;save();updateStampOverlay();queueMarginRefresh();queueDraft()};
 window._pdfPhoto=function(){
   if(!ticket||!ticket.pdf||photoBusy||exportBusy)return;var previous=ticket;
-  beginTicket(previous.original,{text:previous.pdfText});
+  beginTicket(previous.original,{text:previous.pdfText,textLines:previous.pdfTextLines});
   ticket.counterEvent=previous.counterEvent;ticket.counted=previous.counted;ticket.fileNumbers=previous.fileNumbers;
   if(previous.dateSource==='manual')ticket.setDate(previous.date);
   if(previous.mealSource==='manual')ticket.setMeal(previous.meal);
@@ -714,7 +760,7 @@ window._zoom=async function(){
 // A single opt-in local draft. Export and opt-out remove it; no history is kept.
 function snapshotDraft(){
   if(!ticket||ticket.cancelled||ticket.counted||!['crop','edit'].includes(scr))return null;
-  var fields=['source','original','image','processed','imageMode','cropPoints','date','dateSource','meal','mealSource','times','timeStatus','ocrStatus','candidates','pdfText','pdfPage','pdf','counterEvent','counted','fileNumbers','margin','marginHeight','displaySource','needsMargin','quality'];
+  var fields=['source','original','image','processed','imageMode','cropPoints','date','dateSource','meal','mealSource','times','timeCandidates','timeStatus','ocrStatus','candidates','pdfText','pdfTextLines','pdfPage','pdf','counterEvent','counted','fileNumbers','margin','marginHeight','displaySource','needsMargin','quality'];
   var state={};fields.forEach(function(key){if(ticket[key]!==undefined)state[key]=ticket[key]});
   return {ticket:state,imgFull:imgFull,crop:crop.map(function(p){return {x:p.x,y:p.y}}),cropEntry:cropEntry,screen:scr,position:Object.assign({},sp),stamp:Object.assign({},S)};
 }
@@ -803,22 +849,12 @@ window._rotate90=async function(){
 function showSuccess(){
   var ov=document.createElement("div");
   ov.style.cssText="position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);animation:fadeIn .3s ease";
-  ov.innerHTML='<div style="text-align:center;animation:popIn .5s cubic-bezier(.17,.67,.21,1.27)"><div style="font-size:80px;margin-bottom:16px">✅</div><div style="font-size:20px;font-weight:700;color:#fff">Tamponné !</div></div>';
+  ov.innerHTML='<div style="text-align:center;animation:popIn .5s cubic-bezier(.17,.67,.21,1.27)"><div style="color:var(--copper);margin-bottom:16px">'+ic('check',64)+'</div><div style="font-size:20px;font-weight:700;color:#fff">Tamponné !</div></div>';
   document.body.appendChild(ov);
   setTimeout(function(){ov.style.opacity="0";ov.style.transition="opacity .3s";setTimeout(function(){document.body.removeChild(ov)},300)},1200);
 }
 
-// A real same-origin service worker can cache the app and the local OCR engine.
-if('serviceWorker' in navigator){
-  var wasControlled=!!navigator.serviceWorker.controller;
-  navigator.serviceWorker.addEventListener('controllerchange',function(){
-    if(!wasControlled){wasControlled=true;return}
-    if(scr==='home')location.reload();else pendingAppReload=true;
-  });
-  navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(function(registration){
-    document.addEventListener('visibilitychange',function(){if(!document.hidden){void registration.update();void counters.sync()}});
-  }).catch(function(error){console.warn('Mode hors ligne indisponible:',error)});
-}
+StampfelOffline.start(updateOfflineUI,function(){if(scr==='home')location.reload();else pendingAppReload=true});
 if(document.fonts)document.fonts.addEventListener('loadingdone',function(){stampCache=null;updateConfigPreview();updateStampOverlay()});
 
 render();

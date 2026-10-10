@@ -35,13 +35,14 @@
       const context = canvas.getContext("2d");
       try {
         await page.render({ canvasContext: context, viewport, background: "rgb(255,255,255)" }).promise;
-        let text = "";
+        let text = "", textLines = [];
         try {
           const content = await page.getTextContent();
           text = content.items.map(item => typeof item.str === "string" ? item.str + (item.hasEOL ? "\n" : " ") : "").join("").slice(0, 500000);
+          textLines = ReceiptReading.pdfLines(content.items, viewport, content.styles);
         } catch (_) { /* Image-only or unusual PDFs fall back to the local OCR. */ }
         if (destroyed) throw new Error("Import annulé");
-        return { image: canvas.toDataURL("image/png"), text, page: number,
+        return { image: canvas.toDataURL("image/png"), text, textLines, page: number,
           pdf: { bytes, page: number, pages: document.numPages, width: canvas.width, height: canvas.height,
             viewport: { width: viewport.width, height: viewport.height, transform: Array.from(viewport.transform) } } };
       } finally { canvas.width = canvas.height = 0; page.cleanup(); }

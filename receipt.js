@@ -97,6 +97,7 @@
       this.ocrStatus = "reading";
       this.candidates = [];
       this.times = [];
+      this.timeCandidates = [];
       this.meal = "";
       this.mealSource = "";
       this.timeStatus = "missing";
@@ -124,9 +125,10 @@
       if (this.cancelled) return;
       this.ocrStatus = result.status;
       this.candidates = result.candidates || [];
+      if (result.timeCandidates) this.timeCandidates = result.timeCandidates;
       if (result.times) this.times = result.timeUncertain ? [] : result.times;
       if (this.dateSource !== "manual") {
-        this.date = result.status === "found" && this.candidates.length === 1 ? this.candidates[0].iso : this.date;
+        this.date = result.status === "found" && this.candidates.length === 1 ? this.candidates[0].iso : result.status === "ambiguous" || result.status === "uncertain" ? "" : this.date;
         this.dateSource = this.date ? "ocr" : "";
       }
       this.refreshMeal();
