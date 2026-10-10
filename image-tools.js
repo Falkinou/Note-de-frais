@@ -44,7 +44,7 @@
     const source=canvas.toDataURL('image/png');canvas.width=canvas.height=0;return source;
   }
   async function process(operation,source,options){
-    const requested=generation,image=await pixels(source,operation==='detect'?480:2400);
+    const requested=generation,image=await pixels(source,operation==='detect'?480:['inspect','placement'].includes(operation)?1000:2400);
     if(requested!==generation)throw new Error('Traitement annulé');
     return run(operation,image,options);
   }
@@ -52,6 +52,8 @@
     detect:source=>process('detect',source),
     rectify:async(source,points)=>encode(await process('rectify',source,{points})),
     enhance:async(source,mode)=>encode(await process('enhance',source,{mode})),
+    inspect:source=>process('inspect',source),
+    placement:(source,bounds)=>process('placement',source,{bounds}),
     cancel
   };
 })();

@@ -12,6 +12,7 @@ from server.counters import CounterStore, make_handler
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=8780)
+parser.add_argument("--pwa", action="store_true", help="Serve the real service worker for offline checks")
 args = parser.parse_args()
 os.chdir(root)
 csp = re.search(r'Content-Security-Policy "([^"]+)"', (root / "deploy/nginx.conf").read_text()).group(1)
@@ -22,7 +23,7 @@ class Handler(CounterHandler, SimpleHTTPRequestHandler):
     extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".mjs": "application/javascript", ".wasm": "application/wasm"}
 
     def do_GET(self):
-        if self.path == "/sw.js":
+        if self.path == "/sw.js" and not args.pwa:
             # Development changes should not be masked by the production shell cache.
             payload = b"self.addEventListener('install', e => self.skipWaiting()); self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));"
             self.send_response(200)

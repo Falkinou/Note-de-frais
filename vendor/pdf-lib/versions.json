@@ -1,0 +1,31 @@
+{
+  "version": "1.17.1",
+  "source": "https://github.com/Hopding/pdf-lib",
+  "license": "MIT",
+  "dependencies": {
+    "@pdf-lib/standard-fonts": {
+      "version": "1.0.0",
+      "license": "MIT"
+    },
+    "@pdf-lib/upng": {
+      "version": "1.0.1",
+      "license": "MIT"
+    },
+    "pako": {
+      "version": "1.0.11",
+      "license": "(MIT AND Zlib)"
+    },
+    "tslib": {
+      "version": "1.14.1",
+      "license": "0BSD"
+    }
+  },
+  "sha256": {
+    "pdf-lib.min.js": "0f9a5cad07941f0826586c94e089d89b918c46e5c17cf2d5a3c6f666e3bc694f",
+    "LICENSE.md": "f2c9fc00fdb66eb99ac156ba52d734af66d8d309f65753ae809ad34ee2883bcb",
+    "pdf-libstandard-fonts-LICENSE": "45cc2bb9957ed43f5c7f5eb1912f9f670730394d614079510477cae626194649",
+    "pdf-libupng-LICENSE": "c1fb8861eca211bf5aea574358aba7039396c0c1824c2a1477cc126d398efd89",
+    "pako-LICENSE": "a04665b3b2de56c66730c1f720f528175739e4104f79073614aa611da1e85539",
+    "tslib-LICENSE": "210b19e543130388c68654b7497e967119ce17145f66ab7d85688fbd70f08751"
+  }
+}

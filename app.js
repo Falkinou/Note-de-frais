@@ -59,6 +59,8 @@ var ndfDate="";
 var ticket=null, ticketSequence=0, importSequence=0, exportBusy=false;
 var pdfImport=null, pdfPage=1, pdfPreviewSequence=0, pendingAppReload=false;
 var stampCache=null, imageWidth=0, imageHeight=0, editorObserver=null;
+var localStore=ReceiptLocal.create({indexedDB:window.indexedDB}),resumeEnabled=false,resumable=null,draftTimer=null,marginTimer=null;
+var draftNoticeShown=false;
 
 try{var r=localStorage.getItem("ndf_stamp_v10");S=r?Object.assign({},DS,JSON.parse(r)):Object.assign({},DS)}catch(e){S=Object.assign({},DS)}
 try{var lp=JSON.parse(localStorage.getItem("ndf_lastpos"));if(lp&&lp.x)sp=lp}catch(e){}
@@ -90,63 +92,38 @@ function incCount(current){
 }
 window.addEventListener('online',function(){void counters.sync()});
 window.addEventListener('storage',function(event){if(event.key===StampfelCounters.KEY)counters.refresh()});
-function savePos(){try{localStorage.setItem("ndf_lastpos",JSON.stringify(sp))}catch(e){}}
+function savePos(){try{localStorage.setItem("ndf_lastpos",JSON.stringify(sp))}catch(e){}queueDraft()}
 
-// Smart stamp positioning: analyze image to find the emptiest zone
-function findBestPosition(imgSrc,callback){
-  var im2=new Image();
-  im2.onload=function(){
-    var cv2=document.createElement("canvas"),cx2=cv2.getContext("2d");
-    // Downscale for fast analysis
-    var ratio=240/Math.max(im2.width,im2.height),aw=Math.max(4,Math.round(im2.width*ratio)),ah=Math.max(4,Math.round(im2.height*ratio));
-    cv2.width=aw;cv2.height=ah;
-    cx2.drawImage(im2,0,0,aw,ah);
-    var id=cx2.getImageData(0,0,aw,ah),d=id.data;
-
-    // Convert to grayscale
-    var gray=new Float32Array(aw*ah);
-    for(var i=0;i<aw*ah;i++)gray[i]=d[i*4]*0.299+d[i*4+1]*0.587+d[i*4+2]*0.114;
-
-    // Compute variance in blocks (lower variance = emptier area)
-    // Measure the whole rotated stamp, including its selected date.
-    var geometry=StampRenderer.layout(stampSettings(false),aw,ah);
-    var bw=Math.max(2,Math.ceil(geometry.boundWidth)),bh=Math.max(2,Math.ceil(geometry.boundHeight));
-    var bestX=50,bestY=75,bestScore=Infinity;
-    var stepX=Math.max(2,Math.round(aw/20)),stepY=Math.max(2,Math.round(ah/20));
-
-    for(var by=Math.ceil(bh/2);by<=ah-Math.ceil(bh/2);by+=stepY){
-      for(var bx=Math.round(bw/2);bx<aw-Math.round(bw/2);bx+=stepX){
-        var sum=0,sum2=0,count=0;
-        var x0=bx-Math.round(bw/2),y0=by-Math.round(bh/2);
-        for(var yy=y0;yy<y0+bh&&yy<ah;yy++){
-          for(var xx=x0;xx<x0+bw&&xx<aw;xx++){
-            var v=gray[yy*aw+xx];
-            sum+=v;sum2+=v*v;count++;
-          }
-        }
-        if(count<10)continue;
-        var mean=sum/count;
-        var variance=(sum2/count)-(mean*mean);
-
-        // Bonus: prefer bottom half (more natural), avoid very top
-        var yPenalty=by<ah*0.15?500:0;
-        var yBonus=by>ah*0.5?-variance*0.1:0;
-
-        var score=variance+yPenalty+yBonus+(255-mean)*3;
-        if(score<bestScore){bestScore=score;bestX=(bx/aw)*100;bestY=(by/ah)*100}
-      }
-    }
-
-    callback({x:Math.round(bestX),y:Math.round(bestY)});
-  };
-  im2.onerror=function(){callback({x:50,y:75})};
-  im2.src=imgSrc;
+// Placement follows glyph edges, with a margin offered when no blank zone fits.
+async function proposePlacement(current){
+  var source=img,revision=current.revision;
+  try{
+    var bitmap=await loadImage(source),g=StampRenderer.layout(stampSettings(false),bitmap.width,bitmap.height);
+    var result=await ReceiptImage.placement(source,{width:g.boundWidth/bitmap.width,height:g.boundHeight/bitmap.height});
+    if(ticket!==current||current.cancelled||revision!==current.revision||img!==source)return;
+    current.needsMargin=!result.clear;
+    if(!current.placementTouched&&!current.margin){sp={x:result.x,y:result.y};updateStampOverlay()}
+    updatePhotoHints();queueDraft();
+  }catch(error){/* Manual placement remains available. */}
+}
+async function inspectPhoto(current,source){
+  var revision=current.qualityRevision=(current.qualityRevision||0)+1;
+  try{
+    var result=await ReceiptImage.inspect(source);
+    if(ticket!==current||current.cancelled||revision!==current.qualityRevision)return;
+    current.quality=result.warnings;updatePhotoHints();
+  }catch(error){/* A quality hint must never prevent processing a ticket. */}
+}
+function updatePhotoHints(){
+  var node=document.getElementById('photoHints');if(!node||!ticket)return;
+  var warnings=ticket.quality||[],label=ticket.needsMargin&&!ticket.margin?'Peu de place pour le tampon':warnings.length?'Photo à vérifier':'';
+  node.hidden=!label;node.textContent=label+' · Voir';
 }
 
 function save(){try{localStorage.setItem("ndf_stamp_v10",JSON.stringify(S))}catch(e){}}
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
-function dateStr(){return Receipt.displayDate(ndfDate)}
-function fname(){return Receipt.filename(ndfDate)}
+function dateStr(){return Receipt.displayDate(ndfDate,ticket&&!ticket.cancelled?ticket.meal:"")}
+function fname(format){var key=ndfDate+"|"+(ticket?ticket.meal:"");return Receipt.filename(ndfDate,format||"png",ticket?ticket.meal:"",ticket&&ticket.fileNumbers&&ticket.fileNumbers[key]||"")}
 function stampSettings(preview){
   return Object.assign({},S,{date:S.showDate?(dateStr()||(preview?"JJ/MM/AAAA":"")):""});
 }
@@ -166,8 +143,11 @@ async function stampFontReady(){
   stampCache=null;
 }
 function updateStampOverlay(){
-  var image=document.getElementById("ei"),stamp=document.getElementById("sd");
-  if(!image||!stamp||!image.naturalWidth||!image.clientWidth)return;
+  var image=document.getElementById("ei"),stamp=document.getElementById("sd"),container=document.getElementById('ic'),panel=document.querySelector('.image-panel');
+  if(!image||!stamp||!image.naturalWidth||!panel)return;
+  var fit=Math.min(panel.clientWidth/image.naturalWidth,panel.clientHeight/image.naturalHeight);
+  if(!Number.isFinite(fit)||fit<=0)return;
+  container.style.width=image.naturalWidth*fit+'px';container.style.height=image.naturalHeight*fit+'px';
   imageWidth=image.naturalWidth;imageHeight=image.naturalHeight;
   var settings=stampSettings(false),g=StampRenderer.layout(settings,imageWidth,imageHeight);
   sp=StampRenderer.clampPosition(sp,g,imageWidth,imageHeight);
@@ -201,15 +181,22 @@ function updateDateUI(){
     }
   }
   var retry=document.getElementById("retryDate");if(retry)retry.hidden=ticket.ocrStatus==="reading";
+  var meal=document.getElementById('mealSelect');if(meal)meal.value=ticket.meal;
+  var times=ticket.times.filter(function(time){return !time.date||time.date===ticket.date});
+  if(status&&ticket.ocrStatus==='found'&&ticket.dateSource!=='manual')status.textContent='Date lue · à vérifier';
+  if(status&&ticket.mealSource==='manual')status.textContent+=' · Repas corrigé';
+  else if(status&&times.length&&ticket.timeStatus==='found')status.textContent+=' · '+times.map(function(t){return t.time}).join(', ');
+  else if(status&&ticket.timeStatus==='ambiguous')status.textContent='Heures différentes · choisissez midi ou soir';
   var name=document.getElementById("exportFilename");if(name)name.textContent=fname();
-  updateStampOverlay();
+  updateStampOverlay();queueDraft();queueMarginRefresh();
 }
+function needsReading(current){return !current.date&&current.dateSource!=='manual'||!current.times.length&&current.mealSource!=='manual'}
 async function readTicketDate(current){
   var revision=current.ocrRevision=(current.ocrRevision||0)+1;
   current.ocrStatus="reading";updateDateUI();
   try{
-    var result=current.pdfText?Receipt.extractDates(current.pdfText):null;
-    if(!result||result.status==='missing')result=await ReceiptOCR.recognize(current.image);
+    var result=current.pdfText?Receipt.extractDetails(current.pdfText):null;
+    if(!result||result.status==='missing')result=await ReceiptOCR.recognize(current.processed||current.image);
     if(ticket!==current||current.cancelled||current.ocrRevision!==revision)return;
     current.applyOCR(result);
   }catch(error){if(ticket!==current||current.cancelled||current.ocrRevision!==revision)return;current.applyOCR({status:"error",candidates:[]})}
@@ -234,6 +221,7 @@ function render(){
   else if(scr==="edit")renderEdit(el);
   else if(scr==="pdf")renderPDFPicker(el);
   if(scr==="edit"||scr==="crop")updateDateUI();
+  updatePhotoHints();
 }
 
 // ── HOME ──
@@ -250,6 +238,8 @@ function renderHome(el){
       '<button type="button" class="primary-btn home-photo" onclick="window._cam()">'+ic('camera',22)+'Photographier un ticket</button>'+
       '<button type="button" class="home-import" onclick="window._gal()" aria-label="Importer une image ou un PDF">'+ic('import',22)+'Importer</button></section>'+
     '<dl class="home-stats" aria-label="Tickets traités"><div><dd id="personalCounter">—</dd><dt>personnel</dt></div><div><dd id="globalCounter">—</dd><dt>communauté</dt></div></dl>'+
+    '<div id="resumeCard" class="resume-card" '+(resumable?'':'hidden')+'><button type="button" onclick="window._resumeDraft()">Reprendre le ticket</button><button type="button" onclick="window._discardDraft()" aria-label="Effacer le ticket en attente">Effacer</button></div>'+
+    '<button type="button" class="home-options" onclick="window._options()">Options</button>'+
     '</main>';
   updateCounters(counters.snapshot());
   void counters.sync();
@@ -305,7 +295,7 @@ function renderStamp(el){
 function renderCrop(el){
   el.innerHTML='<div class="hdr"><button class="glass-btn compact" onclick="window._cancelCrop()" aria-label="'+(cropEntry?'Revenir au ticket':'Retour à l’accueil')+'">← Retour</button><span class="htitle">Recadrer</span></div>'+
     '<div class="crop-stage"><div id="cropBox"><img id="cropImg" alt="Ticket à recadrer" src="'+imgFull+'" draggable="false"><div id="cropOverlay"></div></div><canvas id="cropLoupe" width="220" height="220" aria-hidden="true" hidden></canvas></div>'+
-    '<div class="crop-bar"><p id="cropStatus" role="status">Placez les quatre coins sur le ticket</p><div class="crop-actions">'+
+    '<div class="crop-bar"><button id="photoHints" class="crop-quality" onclick="window._adjust()" hidden></button><p id="cropStatus" role="status">Placez les quatre coins sur le ticket</p><div class="crop-actions">'+
     '<button id="autoCrop" class="sec-btn" onclick="window._autoCrop()">'+ic('search',16)+' Auto</button>'+
     '<button id="rotatePhoto" class="sec-btn" onclick="window._rotate90()">'+ic('rotate',16)+' 90°</button>'+
     '<button id="resetCrop" class="sec-btn" onclick="window._resetCrop()">Tout garder</button></div>'+
@@ -318,6 +308,9 @@ function setupCrop(){
   var names=['supérieur gauche','supérieur droit','inférieur droit','inférieur gauche'];
   overlay.innerHTML='<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path id="cropShade" fill="rgba(0,0,0,.6)" fill-rule="evenodd"></path><polygon id="cropPolygon" fill="transparent" stroke="#edb28b" stroke-width="2" vector-effect="non-scaling-stroke"></polygon></svg>'+names.map(function(name,i){return '<button type="button" class="crop-handle" data-corner="'+i+'" aria-label="Recadrage : coin '+name+', flèches pour déplacer"><span></span></button>'}).join('');
   drawCropUI();
+  var cropImage=document.getElementById('cropImg'),stage=document.querySelector('.crop-stage');
+  function fitCrop(){if(!cropImage.naturalWidth)return;var ratio=Math.min((stage.clientWidth-48)/cropImage.naturalWidth,(stage.clientHeight-48)/cropImage.naturalHeight);cropImage.style.width=Math.max(1,cropImage.naturalWidth*ratio)+'px';cropImage.style.height=Math.max(1,cropImage.naturalHeight*ratio)+'px'}
+  cropImage.onload=fitCrop;if(cropImage.complete)fitCrop();if(window.ResizeObserver){editorObserver=new ResizeObserver(fitCrop);editorObserver.observe(stage)}
   function position(e){var rect=box.getBoundingClientRect();return {x:Math.max(0,Math.min(100,(e.clientX-rect.left)/rect.width*100)),y:Math.max(0,Math.min(100,(e.clientY-rect.top)/rect.height*100))}}
   overlay.addEventListener('pointerdown',function(e){
     var handle=e.target.closest('[data-corner]');if(!handle||photoBusy||cropDrag)return;
@@ -345,7 +338,7 @@ function setupCrop(){
 function moveCrop(corner,x,y){
   var next=crop.map(function(p){return {x:p.x,y:p.y}});next[corner]={x:Math.max(0,Math.min(100,x)),y:Math.max(0,Math.min(100,y))};
   if(!ReceiptPixels.validQuad(next))return;
-  crop=next;cropRevision++;drawCropUI();
+  crop=next;cropRevision++;drawCropUI();queueDraft();
   var status=document.getElementById('cropStatus');if(status)status.textContent='Coins ajustés · perspective corrigée à la validation';
 }
 function drawCropUI(){
@@ -373,12 +366,9 @@ function finishCrop(current,source,selection){
   current.replaceImage(source);current.cropPoints=selection.map(function(p){return {x:p.x,y:p.y}});current.imageMode='original';current.enhancementCache={};
   img=source;cropEntry=null;cropDrag=null;setPhotoBusy(false);
   current.placementTouched=false;S.rotation=0;
-  var revision=current.revision;scr='edit';render();
-  findBestPosition(img,function(pos){
-    if(ticket!==current||current.cancelled||revision!==current.revision||scr!=='edit'||current.placementTouched)return;
-    sp=pos;S.rotation=0;updateRotationInputs();updateStampOverlay();
-  });
-  if(!current.date && current.dateSource!=='manual'){ReceiptOCR.cancel();readTicketDate(current)}
+  scr='edit';render();
+  current.processed=source;current.margin=false;current.marginHeight=0;proposePlacement(current);inspectPhoto(current,source);queueDraft();
+  if(needsReading(current)){ReceiptOCR.cancel();readTicketDate(current)}
 }
 window._applyCrop=async function(){
   var current=ticket,selection=crop.map(function(p){return {x:p.x,y:p.y}}),source=imgFull;
@@ -392,9 +382,9 @@ window._applyCrop=async function(){
   finally{if(ticket===current&&operation===photoSequence)setPhotoBusy(false)}
 };
 window._skipCrop=function(){if(!photoBusy){cropRevision++;finishCrop(ticket,imgFull,ReceiptPixels.fullFrame())}};
-window._resetCrop=function(){if(photoBusy)return;crop=ReceiptPixels.fullFrame();cropRevision++;drawCropUI();var status=document.getElementById('cropStatus');if(status)status.textContent='Image entière conservée'};
+window._resetCrop=function(){if(photoBusy)return;crop=ReceiptPixels.fullFrame();cropRevision++;drawCropUI();queueDraft();var status=document.getElementById('cropStatus');if(status)status.textContent='Image entière conservée'};
 window._recrop=function(){
-  if(photoBusy||!ticket)return;
+  if(photoBusy||!ticket||ticket.pdf)return;
   cropEntry={source:imgFull,points:crop};crop=(ticket.cropPoints||ReceiptPixels.fullFrame()).map(function(p){return {x:p.x,y:p.y}});cropRevision++;scr='crop';render();
 };
 window._cancelCrop=function(){
@@ -410,7 +400,7 @@ window._autoCrop=async function(silent){
   try{
     var result=await ReceiptImage.detect(source);
     if(ticket!==current||current.cancelled||imgFull!==source||scr!=='crop'||revision!==cropRevision)return;
-    if(result.found){crop=result.points;drawCropUI();status.textContent='Bords proposés · vérifiez les quatre coins'}
+    if(result.found){crop=result.points;drawCropUI();queueDraft();status.textContent='Bords proposés · vérifiez les quatre coins'}
     else status.textContent='Bords peu nets · placez les coins à la main';
   }catch(error){if(ticket===current&&!current.cancelled&&revision===cropRevision&&scr==='crop')status.textContent='Placez les quatre coins sur le ticket'}
   finally{if(ticket===current&&scr==='crop'&&!photoBusy){var active=document.getElementById('autoCrop');if(active)active.disabled=false}}
@@ -418,42 +408,42 @@ window._autoCrop=async function(silent){
 
 // ── EDIT ──
 function renderEdit(el){
-  el.innerHTML='<div class="hdr"><button class="glass-btn compact" onclick="window._go(\'home\')">← Accueil</button><span class="htitle">Positionner</span></div>'+
-    '<div class="scr editor-content"><div class="glass image-panel"><div id="ic"><img id="ei" alt="Ticket à tamponner" src="'+img+'" draggable="false"><button type="button" id="sd" aria-label="Déplacer le tampon avec les flèches du clavier" onkeydown="window._moveStamp(event)"><img alt="" draggable="false"></button></div></div>'+
-    '<div class="photo-tools"><button id="recrop" class="photo-recrop" onclick="window._recrop()">Recadrer</button><div id="imageModes" class="image-modes" role="group" aria-label="Rendu de la photo">'+[['original','Original'],['readable','Lisible'],['mono','N&B']].map(function(mode){return '<button type="button" data-mode="'+mode[0]+'" aria-pressed="'+(ticket.imageMode===mode[0])+'" onclick="window._imageMode(\''+mode[0]+'\')">'+mode[1]+'</button>'}).join('')+'</div></div><p id="photoStatus" role="status" hidden></p>'+
-    '<p class="pinch-hint">Glissez le tampon · Pincez pour ajuster</p>'+
-    '<div class="glass edit-field"><label for="rotSlider">Rotation</label><div class="rotation-controls"><input id="rotSlider" type="range" min="-180" max="180" value="'+S.rotation+'" oninput="window._rot(this.value)" aria-label="Rotation du tampon"><input id="rotNum" type="number" min="-180" max="180" value="'+Math.round(S.rotation)+'" oninput="window._rot(this.value)" aria-label="Rotation en degrés"><span>°</span></div></div>'+
-    '<div class="glass edit-field date-panel"><label for="ndfDateIn">Date du ticket</label><input id="ndfDateIn" type="date" value="'+ndfDate+'" oninput="window._setDate(this.value)" aria-describedby="dateStatus"><p id="dateStatus" role="status" aria-live="polite"></p><div id="dateChoices"></div><button id="retryDate" class="date-retry" onclick="window._retryDate()" type="button">Relire la date</button></div>'+
-    '</div>'+
-    '<div class="export-bar"><p id="exportFilename"></p>'+
-    '<button id="dlb" class="primary-btn" onclick="window._gen()">'+ic('save',16)+' Exporter l’image</button><button id="dlbpdf" class="sec-btn" onclick="window._genPDF()">'+ic('pdf',16)+' Exporter en PDF</button></div>';
+  var photoTools=ticket.pdf?'<span class="pdf-kept">PDF · page '+ticket.pdf.page+' sur '+ticket.pdf.pages+'</span>':'<button id="recrop" class="photo-recrop" onclick="window._recrop()">Recadrer</button><div id="imageModes" class="image-modes" role="group" aria-label="Rendu de la photo">'+[['original','Original'],['readable','Lisible'],['mono','N&B']].map(function(mode){return '<button type="button" data-mode="'+mode[0]+'" aria-pressed="'+(ticket.imageMode===mode[0])+'" onclick="window._imageMode(\''+mode[0]+'\')">'+mode[1]+'</button>'}).join('')+'</div>';
+  el.innerHTML='<div class="hdr editor-header"><button class="glass-btn compact" onclick="window._go(\'home\')">← Accueil</button><span class="htitle">Positionner</span><button class="header-zoom" onclick="window._zoom()" aria-label="Agrandir le ticket">'+ic('search',18)+'</button></div>'+
+    '<div class="editor-content"><div class="glass image-panel"><div id="ic"><img id="ei" alt="Ticket à tamponner, touchez pour agrandir" src="'+img+'" draggable="false"><button type="button" id="sd" aria-label="Déplacer le tampon avec les flèches du clavier" onkeydown="window._moveStamp(event)"><img alt="" draggable="false"></button></div><button id="photoHints" class="photo-hint" onclick="window._adjust()" hidden></button></div>'+
+    '<div class="photo-tools">'+photoTools+'</div><p id="photoStatus" role="status" hidden></p>'+
+    '<div class="stamp-actions"><span>Glissez · Pincez le tampon</span><button type="button" onclick="window._adjust()">Ajuster '+ic('edit',13)+'</button></div>'+
+    '<div class="date-panel"><div class="date-labels"><label for="ndfDateIn">Date du ticket</label><label for="mealSelect">Repas</label></div><div class="date-fields"><input id="ndfDateIn" type="date" value="'+ndfDate+'" oninput="window._setDate(this.value)" aria-describedby="dateStatus"><select id="mealSelect" aria-label="Repas" onchange="window._setMeal(this.value)"><option value="">—</option><option value="midi">Midi</option><option value="soir">Soir</option></select></div><div class="date-reading"><p id="dateStatus" role="status" aria-live="polite"></p><button type="button" onclick="window._dateDetails()" aria-label="Vérifier la lecture de la date et de l’heure">'+ic('search',15)+'</button></div></div>'+
+    '</div><div class="export-bar compact-export"><p id="exportFilename"></p><div class="export-buttons">'+
+    '<button id="dlb" class="sec-btn" onclick="window._gen()">'+ic('image',16)+' Image</button><button id="dlbpdf" class="primary-btn" onclick="window._genPDF()">'+ic('pdf',16)+' '+(ticket.pdf?'PDF complet':'PDF')+'</button></div></div>';
   setupDragAndPinch();
   stampFontReady().then(function(){if(scr==='edit')updateStampOverlay()});
 }
 
 function setupDragAndPinch(){
   var container=document.getElementById('ic'),stamp=document.getElementById('sd'),image=document.getElementById('ei');
-  var points=new Map(),gesture=null,offset=null;
+  var points=new Map(),gesture=null,offset=null,backgroundTap=null;
   image.onload=updateStampOverlay;if(image.complete)updateStampOverlay();
   function two(){return Array.from(points.values()).slice(0,2)}
   function distance(p){return Math.hypot(p[1].x-p[0].x,p[1].y-p[0].y)}
   function angle(p){return Math.atan2(p[1].y-p[0].y,p[1].x-p[0].x)*180/Math.PI}
   container.onpointerdown=function(e){
-    if(ticket)ticket.placementTouched=true;
-    if(!stamp.contains(e.target)&&points.size===0){points.set(e.pointerId,{x:e.clientX,y:e.clientY});container.setPointerCapture(e.pointerId);return}
+    if(photoBusy||exportBusy)return;
+    if(!stamp.contains(e.target)&&points.size===0){backgroundTap={x:e.clientX,y:e.clientY,time:Date.now()};points.set(e.pointerId,{x:e.clientX,y:e.clientY});container.setPointerCapture(e.pointerId);return}
+    backgroundTap=null;if(ticket)ticket.placementTouched=true;
     e.preventDefault();points.set(e.pointerId,{x:e.clientX,y:e.clientY});container.setPointerCapture(e.pointerId);
     if(points.size===2){var pair=two();gesture={distance:distance(pair),angle:angle(pair),scale:S.scale,rotation:S.rotation};offset=null}
     else{var rect=container.getBoundingClientRect();offset={x:e.clientX-rect.left-rect.width*sp.x/100,y:e.clientY-rect.top-rect.height*sp.y/100}}
   };
   container.onpointermove=function(e){
-    if(!points.has(e.pointerId))return;points.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(!points.has(e.pointerId))return;if(backgroundTap&&Math.hypot(e.clientX-backgroundTap.x,e.clientY-backgroundTap.y)>8)backgroundTap=null;points.set(e.pointerId,{x:e.clientX,y:e.clientY});
     if(points.size===2&&gesture){var pair=two();S.scale=Math.max(.3,Math.min(2.5,gesture.scale*distance(pair)/Math.max(1,gesture.distance)));S.rotation=((gesture.rotation+angle(pair)-gesture.angle+540)%360)-180;updateRotationInputs()}
     else if(offset&&points.size===1){var rect=container.getBoundingClientRect();sp={x:(e.clientX-rect.left-offset.x)/rect.width*100,y:(e.clientY-rect.top-offset.y)/rect.height*100}}
     updateStampOverlay();
   };
-  function finish(e){points.delete(e.pointerId);gesture=null;offset=null;save();savePos()}
+  function finish(e){var zoom=e.type==='pointerup'&&backgroundTap&&points.size===1&&Date.now()-backgroundTap.time<500;points.delete(e.pointerId);gesture=null;offset=null;backgroundTap=null;save();savePos();queueMarginRefresh();if(zoom)window._zoom()}
   container.onpointerup=finish;container.onpointercancel=finish;container.onlostpointercapture=finish;
-  if(window.ResizeObserver){editorObserver=new ResizeObserver(updateStampOverlay);editorObserver.observe(image)}
+  if(window.ResizeObserver){editorObserver=new ResizeObserver(updateStampOverlay);editorObserver.observe(document.querySelector('.image-panel'))}
 }
 function updateRotationInputs(){
   var slider=document.getElementById('rotSlider'),number=document.getElementById('rotNum');
@@ -472,11 +462,14 @@ function beginTicket(source,metadata){
   if(ticket)ticket.cancel();ReceiptOCR.cancel();ReceiptImage.cancel();
   ticket=new Receipt.Session(++ticketSequence,source);var current=ticket;
   current.counterEvent=eventId();current.counted=false;
-  current.pdfText=metadata&&metadata.text||'';current.pdfPage=metadata&&metadata.page||0;
+  clearTimeout(draftTimer);void localStore.clearDraft().catch(function(){});resumable=null;
+  current.pdfText=metadata&&metadata.text||'';current.pdfPage=metadata&&metadata.page||0;current.pdf=metadata&&metadata.pdf||null;
   img=imgFull=source;ndfDate='';S.rotation=0;exportBusy=false;photoBusy=false;
-  current.imageMode='original';current.enhancementCache={};
+  current.imageMode='original';current.enhancementCache={};current.processed=source;current.margin=false;current.marginHeight=0;
   crop=ReceiptPixels.fullFrame();cropEntry=null;cropDrag=null;cropRevision++;photoSequence++;sp={x:50,y:75};stampCache=null;
-  scr='crop';render();readTicketDate(current);if(!current.pdfPage)window._autoCrop(true);
+  scr=current.pdf?'edit':'crop';render();readTicketDate(current);
+  if(current.pdf)proposePlacement(current);else{window._autoCrop(true);inspectPhoto(current,source)}
+  queueDraft();
 }
 function closePDFImport(){
   pdfPreviewSequence++;
@@ -491,7 +484,7 @@ function renderPDFPicker(el){
     '<div class="export-bar"><div class="pdf-navigation"><button type="button" class="glass-btn compact" onclick="window._pdfPage('+Math.max(1,page-1)+')" aria-label="Page précédente" '+(page===1?'disabled':'')+'>←</button>'+
     '<label for="pdfPageNumber">Page <input id="pdfPageNumber" type="number" inputmode="numeric" min="1" max="'+current.document.pages+'" value="'+page+'" onchange="window._pdfPage(this.value)"> sur '+current.document.pages+'</label>'+
     '<button type="button" class="glass-btn compact" onclick="window._pdfPage('+Math.min(current.document.pages,page+1)+')" aria-label="Page suivante" '+(page===current.document.pages?'disabled':'')+'>→</button></div>'+
-    '<button type="button" id="pdfUse" class="primary-btn" disabled onclick="window._usePDFPage()">Utiliser cette page</button></div>';
+    '<p class="pdf-preserved">Le PDF complet sera conservé.</p><button type="button" id="pdfUse" class="primary-btn" disabled onclick="window._usePDFPage()">Tamponner cette page</button></div>';
   current.document.renderPage(page,900).then(function(result){
     if(pdfImport!==current||sequence!==pdfPreviewSequence||scr!=='pdf')return;
     var preview=document.getElementById('pdfPreview');preview.src=result.image;preview.hidden=false;
@@ -530,7 +523,7 @@ function fileInput(capture){
           await document.destroy();document=null;
           if(request===importSequence)beginTicket(page.image,page);
         }else{
-          if(ticket)ticket.cancel();ReceiptOCR.cancel();closePDFImport();
+          if(ticket)ticket.cancel();ReceiptOCR.cancel();ReceiptImage.cancel();closePDFImport();
           pdfImport={document:document,name:file.name};document=null;pdfPage=1;scr='pdf';render();
         }
       }else{
@@ -598,7 +591,7 @@ function createPDF(canvas){
     return new Blob([pdfBuf],{type:"application/pdf"});
 }
 function setExportBusy(busy){
-  exportBusy=busy;document.querySelectorAll('#app button,#app input').forEach(function(el){el.disabled=busy});
+  exportBusy=busy;document.querySelectorAll('#app button,#app input,#app select').forEach(function(el){el.disabled=busy});
 }
 function downloadBlob(blob,name){
   var url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();setTimeout(function(){URL.revokeObjectURL(url)},10000);
@@ -608,38 +601,155 @@ async function saveBlob(blob,name){
   var result=await ExportFile.deliver(blob,name,isMobile?'share':'download',{navigator:navigator,File:File,download:downloadBlob});
   return result==='cancelled'?null:result==='shared'?'Partagé ✓':'Téléchargement lancé ✓';
 }
-function postSaveActions(){
-  var bar=document.querySelector('.export-bar');if(!bar||document.getElementById('postSaveWrap'))return;
-  var wrap=document.createElement('div');wrap.id='postSaveWrap';wrap.innerHTML='<button class="sec-btn" onclick="window._go(\'home\')">Accueil</button><button class="primary-btn" onclick="window._cam()">Nouvelle photo</button>';bar.appendChild(wrap);
+function postSaveActions(filename){
+  var name=document.getElementById('exportFilename');if(!name)return;
+  name.replaceChildren();var label=document.createElement('span');label.textContent=filename||fname();name.appendChild(label);
+  var next=document.createElement('button');next.className='next-ticket';next.type='button';next.textContent='Nouveau ticket';next.onclick=function(){window._go('home')};name.appendChild(next);
 }
 async function exportDocument(format){
   if(exportBusy||photoBusy||!ticket||!img)return;
   if(ticket.ocrStatus==="reading"&&ticket.dateSource!=="manual"){toast('Lecture en cours. Attendez ou saisissez la date.');document.getElementById('ndfDateIn').focus();return}
   if(!Receipt.validDate(ticket.date)){toast('Vérifiez la date du ticket avant de sauvegarder');document.getElementById('ndfDateIn').focus();return}
-  var current=ticket,source=img,name=Receipt.filename(ticket.date,format);
-  document.getElementById('exportFilename').textContent=name;
+  var current=ticket;
   setExportBusy(true);
   try{
     await stampFontReady();if(ticket!==current||current.cancelled)return;
+    clearTimeout(marginTimer);if(current.margin)await refreshMargin(current,false);
+    var key=current.date+'|'+current.meal;current.fileNumbers=current.fileNumbers||{};
+    if(!current.fileNumbers[key]){
+      try{current.fileNumbers[key]=await localStore.reserveName(current.counterEvent,current.date,current.meal)}
+      catch(error){current.fileNumbers[key]=Date.now().toString(36)+'-'+current.counterEvent.slice(0,8)}
+    }
+    var name=fname(format),source=img;document.getElementById('exportFilename').textContent=name;queueDraft();
     updateStampOverlay();
     var image=await loadImage(source);if(ticket!==current||current.cancelled)return;
     var canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;
-    var context=canvas.getContext('2d');context.fillStyle='#fff';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(image,0,0);
+    var context=canvas.getContext('2d');
+    if(!(format==='pdf'&&current.pdf)){context.fillStyle='#fff';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(image,0,0)}
     drawStampOnCanvas(canvas,context,image.width,image.height);
-    var blob=format==='pdf'?createPDF(canvas):await new Promise(function(resolve,reject){canvas.toBlob(function(value){if(value)resolve(value);else reject(new Error('Export impossible'))},'image/png')});
+    var blob=format==='pdf'?(current.pdf?new Blob([await ReceiptPDFExport.stamp({pdf:current.pdf,overlay:canvas.toDataURL('image/png'),outputHeight:canvas.height})],{type:'application/pdf'}):createPDF(canvas)):await new Promise(function(resolve,reject){canvas.toBlob(function(value){if(value)resolve(value);else reject(new Error('Export impossible'))},'image/png')});
     var result=await saveBlob(blob,name);
     if(!result){toast('Partage annulé');return}
-    incCount(current);if(navigator.vibrate)navigator.vibrate([20,50,20]);showSuccess();toast(result);
-    postSaveActions();
+    incCount(current);clearTimeout(draftTimer);await localStore.clearDraft().catch(function(){});resumable=null;
+    if(navigator.vibrate)navigator.vibrate([20,50,20]);toast(result);
+    postSaveActions(name);
   }catch(error){toast('Sauvegarde impossible. Réessayez.');console.error('Export:',error)}
   finally{setExportBusy(false)}
 }
 window._gen=function(){return exportDocument('png')};
 window._genPDF=function(){return exportDocument('pdf')};
 
+// Secondary controls live in sheets; the editor itself always fits the viewport.
+function sheet(title,content){
+  var previous=document.querySelector('.tool-sheet');if(previous)previous.close();
+  var focus=document.activeElement,dialog=document.createElement('dialog');dialog.className='tool-sheet';
+  dialog.innerHTML='<header><h2>'+title+'</h2><button type="button" aria-label="Fermer les réglages">Fermer</button></header><div class="sheet-content">'+content+'</div>';
+  document.body.appendChild(dialog);dialog.showModal();dialog.querySelector('header button').onclick=function(){dialog.close()};
+  dialog.onclose=function(){dialog.remove();if(focus&&focus.isConnected)focus.focus()};return dialog;
+}
+function resumeControl(){return '<label class="resume-toggle"><input type="checkbox" '+(resumeEnabled?'checked':'')+' onchange="window._toggleResume(this.checked)"><span>Reprendre après une fermeture<small>Sur cet appareil, pendant 24 h. Effacé après export.</small></span></label>'}
+window._options=function(){sheet('Options',resumeControl()+'<p class="version-info">Stampfel 1.10.0 · '+(navigator.onLine?'En ligne':'Hors ligne')+'</p>')};
+window._adjust=function(){
+  if(!ticket||photoBusy||exportBusy)return;
+  var content='',labels={blur:'La photo semble floue. Vérifiez les petits caractères.',edges:'Du contenu est proche du cadre. Vérifiez les bords.',glare:'Un reflet est possible. Vérifiez que le texte reste lisible.',dark:'La photo est très sombre. Essayez le rendu Lisible ou une nouvelle photo.'};
+  if((ticket.quality||[]).length)content+='<div class="quality-details">'+ticket.quality.map(function(code){return '<p>'+labels[code]+'</p>'}).join('')+(!ticket.pdf?'<button type="button" class="sec-btn" onclick="this.closest(\'dialog\').close();window._cam()">Reprendre la photo</button>':'')+'</div>';
+  if(scr==='edit'){
+    content+='<label class="sheet-label" for="rotSlider">Rotation</label><div class="rotation-controls"><input id="rotSlider" type="range" min="-180" max="180" value="'+S.rotation+'" oninput="window._rot(this.value)" aria-label="Rotation du tampon"><input id="rotNum" type="number" min="-180" max="180" value="'+Math.round(S.rotation)+'" oninput="window._rot(this.value)" aria-label="Rotation en degrés"><span>°</span></div>'+
+      '<label class="sheet-label" for="stampSize">Taille du tampon</label><input id="stampSize" type="range" min="0.3" max="2.5" step="0.05" value="'+S.scale+'" oninput="window._editorScale(this.value)">'+
+      '<button type="button" class="sec-btn" onclick="this.closest(\'dialog\').close();window._margin()">'+(ticket.margin?'Retirer la marge blanche':'Ajouter une marge pour le tampon')+'</button>'+
+      (ticket.needsMargin&&!ticket.margin?'<p class="sheet-note">Le ticket est chargé. Une marge permet de garder toutes les informations visibles.</p>':'')+
+      '<label class="resume-toggle"><input type="checkbox" '+(S.showDate?'checked':'')+' onchange="window._editorShowDate(this.checked)"><span>Afficher la date sur le tampon</span></label>';
+    if(ticket.pdf)content+='<button type="button" class="sec-btn" onclick="this.closest(\'dialog\').close();window._pdfPhoto()">Retoucher une copie de cette page</button><p class="sheet-note">Pour recadrer ou améliorer un PDF scanné. La copie contiendra uniquement cette page, sous forme d’image.</p>';
+  }
+  content+=resumeControl();sheet(scr==='edit'?'Ajuster le tampon':'Vérifier la photo',content);
+};
+window._dateDetails=function(){
+  sheet('Date et repas','<p class="sheet-note">Midi : 10 h à 14 h. Soir : 18 h à minuit.</p><div id="dateChoices"></div><button type="button" class="sec-btn" onclick="this.closest(\'dialog\').close();window._retryDate()">Relire la date et l’heure</button>');updateDateUI();
+};
+window._editorScale=function(value){S.scale=Math.max(.3,Math.min(2.5,Number(value)||1));ticket.placementTouched=true;save();updateStampOverlay();queueMarginRefresh();queueDraft()};
+window._editorShowDate=function(value){S.showDate=value;save();updateStampOverlay();queueMarginRefresh();queueDraft()};
+window._pdfPhoto=function(){
+  if(!ticket||!ticket.pdf||photoBusy||exportBusy)return;var previous=ticket;
+  beginTicket(previous.original,{text:previous.pdfText});
+  ticket.counterEvent=previous.counterEvent;ticket.counted=previous.counted;ticket.fileNumbers=previous.fileNumbers;
+  if(previous.dateSource==='manual')ticket.setDate(previous.date);
+  if(previous.mealSource==='manual')ticket.setMeal(previous.meal);
+  updateDateUI();queueDraft();
+};
+async function imageWithMargin(source,height){
+  if(!height)return source;var image=await loadImage(source),canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height+height;
+  var context=canvas.getContext('2d');context.fillStyle='#fff';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(image,0,0);return canvas.toDataURL('image/png');
+}
+async function refreshMargin(current,center){
+  var source=current.processed||current.original,base=await loadImage(source),revision=current.revision;
+  var geometry=StampRenderer.layout(stampSettings(false),base.width,base.height+base.width*2);
+  var height=current.margin?Math.ceil(geometry.boundHeight+base.width*.06):0;
+  if(current.marginHeight===height&&current.displaySource===source)return;
+  var result=await imageWithMargin(source,height);
+  if(ticket!==current||current.cancelled||current.revision!==revision)return;
+  current.marginHeight=height;current.displaySource=source;current.image=result;img=result;
+  if(center&&height){sp={x:50,y:(base.height+height/2)/(base.height+height)*100};current.placementTouched=true}
+  else if(center)sp={x:50,y:75};
+  var image=document.getElementById('ei');if(image)image.src=result;
+  updatePhotoHints();updateStampOverlay();queueDraft();
+}
+function queueMarginRefresh(){
+  clearTimeout(marginTimer);if(!ticket||!ticket.margin||ticket.cancelled||scr!=='edit')return;
+  var current=ticket;marginTimer=setTimeout(function(){if(!photoBusy&&!exportBusy)void refreshMargin(current,true).catch(function(){})},150);
+}
+window._margin=async function(){
+  if(!ticket||photoBusy||exportBusy)return;var current=ticket;setPhotoBusy(true);current.margin=!current.margin;current.revision++;
+  try{await refreshMargin(current,true)}catch(error){current.margin=!current.margin;toast('Marge indisponible. Réessayez.')}finally{if(ticket===current)setPhotoBusy(false)}
+};
+window._zoom=async function(){
+  if(!ticket||photoBusy||exportBusy)return;var current=ticket,source=img;
+  try{
+    var image=await loadImage(source),canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;
+    var context=canvas.getContext('2d');context.drawImage(image,0,0);drawStampOnCanvas(canvas,context,image.width,image.height);
+    var original=await imageWithMargin(current.original,current.marginHeight||0);
+    if(ticket===current&&!current.cancelled&&scr==='edit')ReceiptViewer.open({image:canvas.toDataURL('image/png'),original:original});
+  }catch(error){toast('Zoom indisponible. Réessayez.')}
+};
+
+// A single opt-in local draft. Export and opt-out remove it; no history is kept.
+function snapshotDraft(){
+  if(!ticket||ticket.cancelled||ticket.counted||!['crop','edit'].includes(scr))return null;
+  var fields=['source','original','image','processed','imageMode','cropPoints','date','dateSource','meal','mealSource','times','timeStatus','ocrStatus','candidates','pdfText','pdfPage','pdf','counterEvent','counted','fileNumbers','margin','marginHeight','displaySource','needsMargin','quality'];
+  var state={};fields.forEach(function(key){if(ticket[key]!==undefined)state[key]=ticket[key]});
+  return {ticket:state,imgFull:imgFull,crop:crop.map(function(p){return {x:p.x,y:p.y}}),cropEntry:cropEntry,screen:scr,position:Object.assign({},sp),stamp:Object.assign({},S)};
+}
+async function saveDraftNow(){
+  clearTimeout(draftTimer);if(!resumeEnabled)return;var payload=snapshotDraft();if(!payload)return;
+  try{await localStore.saveDraft(payload);resumable=await localStore.readDraft();refreshResumeCard()}
+  catch(error){if(!draftNoticeShown){draftNoticeShown=true;toast('Reprise locale indisponible. Gardez ce ticket ouvert.')}}
+}
+function queueDraft(){clearTimeout(draftTimer);if(resumeEnabled)draftTimer=setTimeout(saveDraftNow,350)}
+function refreshResumeCard(){var card=document.getElementById('resumeCard');if(card)card.hidden=!resumable}
+window._toggleResume=async function(value){
+  try{await localStore.setEnabled(value);resumeEnabled=value;resumable=null;draftNoticeShown=false;if(value)await saveDraftNow();refreshResumeCard()}
+  catch(error){resumeEnabled=false;document.querySelectorAll('.resume-toggle input').forEach(function(input){if(input.onchange&&input.getAttribute('onchange').includes('_toggleResume'))input.checked=false});toast('Le stockage local n’est pas disponible.')}
+};
+window._discardDraft=async function(){await localStore.clearDraft().catch(function(){});resumable=null;refreshResumeCard()};
+window._resumeDraft=async function(){
+  try{
+    var saved=await localStore.readDraft();if(!saved){resumable=null;refreshResumeCard();toast('Ce ticket n’est plus disponible.');return;}
+    var payload=saved.payload,state=payload.ticket;
+    if(!state||!['source','original','image','processed'].every(function(key){return typeof state[key]==='string'&&/^data:image\/(png|jpeg);base64,/.test(state[key])})||!ReceiptPixels.validQuad(payload.crop))throw new Error('Brouillon invalide');
+    if(ticket)ticket.cancel();ReceiptOCR.cancel();ReceiptImage.cancel();
+    ticket=Object.assign(new Receipt.Session(++ticketSequence,state.source),state);ticket.cancelled=false;ticket.revision=0;ticket.enhancementCache={};ticket.placementTouched=true;
+    if(!Receipt.validDate(ticket.date))ticket.date='';if(!Receipt.validMeal(ticket.meal))ticket.meal='';
+    S=Object.assign({},DS,payload.stamp);sp=payload.position;img=ticket.image;imgFull=payload.imgFull;crop=payload.crop;cropEntry=payload.cropEntry;ndfDate=ticket.date;
+    scr=payload.screen==='crop'?'crop':'edit';photoBusy=exportBusy=false;cropDrag=null;cropRevision++;photoSequence++;stampCache=null;render();
+    if(ticket.ocrStatus==='reading')readTicketDate(ticket);
+  }catch(error){toast('Impossible de reprendre ce ticket. Importez-le à nouveau.')}
+};
+localStore.enabled().then(async function(value){resumeEnabled=value;resumable=await localStore.readDraft();refreshResumeCard();if(ticket)queueDraft()}).catch(function(){});
+document.addEventListener('visibilitychange',function(){if(document.hidden)void saveDraftNow();else if(scr==='home')void localStore.readDraft().then(function(value){resumable=value;refreshResumeCard()}).catch(function(){})});
+window.addEventListener('pagehide',function(){void saveDraftNow()});
+
 // ── GLOBALS ──
 window._go=function(s){
-  if(s==='home'){importSequence++;cropRevision++;photoSequence++;if(ticket)ticket.cancel();ReceiptOCR.cancel();ReceiptImage.cancel();closePDFImport();photoBusy=false;cropEntry=null;cropDrag=null;}
+  if(s==='home'){void saveDraftNow();clearTimeout(marginTimer);ReceiptViewer.close();importSequence++;cropRevision++;photoSequence++;if(ticket)ticket.cancel();ReceiptOCR.cancel();ReceiptImage.cancel();closePDFImport();photoBusy=false;cropEntry=null;cropDrag=null;}
   scr=s;render();
 };
 window._cam=function(){fileInput(true)};
@@ -647,17 +757,16 @@ window._gal=function(){fileInput(false)};
 
 // Always process the unfiltered crop, with a cache for immediate comparisons.
 window._imageMode=async function(mode){
-  var current=ticket;if(photoBusy||!current||current.cancelled||!['original','readable','mono'].includes(mode))return;
+  var current=ticket;if(photoBusy||!current||current.cancelled||current.pdf||!['original','readable','mono'].includes(mode))return;
   if(current.imageMode===mode)return;
   var revision=++current.revision,source=current.original,operation=++photoSequence;setPhotoBusy(true);
   try{
     var result=mode==='original'?source:current.enhancementCache[mode]||await ReceiptImage.enhance(source,mode);
     if(ticket!==current||current.cancelled||revision!==current.revision||scr!=='edit')return;
     if(mode!=='original')current.enhancementCache[mode]=result;
-    current.imageMode=mode;current.image=result;current.enhanced=mode!=='original';img=result;
-    document.getElementById('ei').src=result;
+    current.imageMode=mode;current.processed=result;current.enhanced=mode!=='original';await refreshMargin(current,false);
     document.querySelectorAll('#imageModes button').forEach(function(button){button.setAttribute('aria-pressed',String(button.dataset.mode===mode))});
-    if(!current.date&&current.dateSource!=='manual'){ReceiptOCR.cancel();readTicketDate(current)}
+    if(needsReading(current)){ReceiptOCR.cancel();readTicketDate(current)}queueDraft();
   }catch(error){if(ticket===current&&!current.cancelled)toast('Traitement indisponible. Image conservée.')}
   finally{if(ticket===current&&operation===photoSequence)setPhotoBusy(false)}
 };
@@ -674,9 +783,10 @@ window._tarc=function(){S.arcText=!S.arcText;save();render()};
 window._tvint=function(){S.vintage=!S.vintage;save();render()};
 window._sc=function(v){S.scale=Math.max(.3,Math.min(2.5,parseFloat(v)||1));save();updateConfigPreview()};
 window._tdate=function(){S.showDate=!S.showDate;save();render()};
-window._rot=function(v){S.rotation=Math.max(-180,Math.min(180,Number(v)||0));save();updateRotationInputs();updateStampOverlay()};
+window._rot=function(v){S.rotation=Math.max(-180,Math.min(180,Number(v)||0));if(ticket)ticket.placementTouched=true;save();updateRotationInputs();updateStampOverlay();queueMarginRefresh();queueDraft()};
 window._moveStamp=function(event){var delta={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[event.key];if(!delta)return;event.preventDefault();if(ticket)ticket.placementTouched=true;sp.x+=delta[0]*(event.shiftKey?5:1);sp.y+=delta[1]*(event.shiftKey?5:1);updateStampOverlay();savePos()};
 window._setDate=function(v){if(!ticket)return;ticket.setDate(v);ndfDate=ticket.date;updateDateUI()};
+window._setMeal=function(v){if(!ticket)return;ticket.setMeal(v);updateDateUI()};
 window._rotate90=async function(){
   var current=ticket,source=imgFull;if(photoBusy||!current||current.cancelled)return;
   cropRevision++;var operation=++photoSequence;setPhotoBusy(true);

@@ -7,8 +7,9 @@
     if (!library) library = import(new URL("pdf.min.mjs", base).href).catch(error => { library = null; throw error; });
     const pdfjs = await library;
     pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdf.worker.min.mjs", base).href;
+    const bytes = new Uint8Array(await file.arrayBuffer());
     const task = pdfjs.getDocument({
-      data: new Uint8Array(await file.arrayBuffer()),
+      data: bytes.slice(),
       cMapUrl: new URL("cmaps/", base).href, cMapPacked: true,
       standardFontDataUrl: new URL("standard_fonts/", base).href,
       wasmUrl: new URL("wasm/", base).href,
@@ -40,7 +41,9 @@
           text = content.items.map(item => typeof item.str === "string" ? item.str + (item.hasEOL ? "\n" : " ") : "").join("").slice(0, 500000);
         } catch (_) { /* Image-only or unusual PDFs fall back to the local OCR. */ }
         if (destroyed) throw new Error("Import annulé");
-        return { image: canvas.toDataURL("image/jpeg", .94), text, page: number };
+        return { image: canvas.toDataURL("image/png"), text, page: number,
+          pdf: { bytes, page: number, pages: document.numPages, width: canvas.width, height: canvas.height,
+            viewport: { width: viewport.width, height: viewport.height, transform: Array.from(viewport.transform) } } };
       } finally { canvas.width = canvas.height = 0; page.cleanup(); }
     }
     return { pages: document.numPages, renderPage, destroy: function () { destroyed = true; return task.destroy(); } };

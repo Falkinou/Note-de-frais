@@ -49,8 +49,9 @@
           if (job !== generation) throw new Error("Lecture remplacée");
           const { data } = await active.recognize(source, { rotateAuto: true }, { text: true });
           if (job !== generation) throw new Error("Lecture remplacée");
-          const result = Receipt.extractDates(data.text);
+          const result = Receipt.extractDetails(data.text);
           if (result.status === "found" && data.confidence < 70) result.status = "uncertain";
+          result.timeUncertain = data.confidence < 70;
           return result;
         })(),
         new Promise((_, reject) => {

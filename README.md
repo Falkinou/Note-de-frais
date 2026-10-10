@@ -11,9 +11,9 @@
 ## Fonctionnalités
 
 ### Tamponnage
-- **Un seul parcours** : photo ou import → recadrage → positionnement du tampon → export PNG ou PDF
+- **Un seul parcours** : photo ou import → positionnement du tampon → export PNG ou PDF ; recadrage proposé pour les images
 - **Importer** : images ou PDF (25 Mo maximum), avec choix de la page pour les documents multipages
-- **Positionnement intelligent** : analyse la luminosité de l'image pour placer le tampon dans la zone la plus claire
+- **Placement proposé** : analyse les contours de l'impression, y compris les caractères pâles, pour chercher un emplacement peu occupé ; une marge blanche peut accueillir le tampon si le ticket manque de place
 - **Recadrage proposé** : recherche du papier et vérification de ses quatre bords ; si la détection est incertaine, l’image entière est conservée
 - **Correction de perspective** : quatre coins indépendants redressent les photos prises de biais
 - Poignées tactiles de 44 px, loupe pendant le déplacement et ajustement au clavier
@@ -24,7 +24,7 @@
 - **Slider rotation** + champ numérique pour un contrôle précis
 - Déplacement du tampon et des coins de recadrage avec les flèches du clavier
 
-### Lecture de la date
+### Lecture de la date et de l'heure
 - Lecture automatique dès la photo ou l'import
 - Texte natif du PDF utilisé en priorité ; les PDF scannés passent par la reconnaissance locale
 - Reconnaissance locale avec Tesseract.js et un modèle français hébergé avec l'application
@@ -32,8 +32,10 @@
 - Une date unique suffisamment lisible préremplit le champ ; plusieurs dates ou une lecture incertaine demandent un choix
 - Les dates invalides et les lignes identifiées comme une expiration, une échéance ou une validité sont écartées
 - Saisie manuelle toujours disponible et prioritaire, même si la lecture se termine ensuite
-- Si la date n’est pas encore trouvée, nouvelle lecture après redressement ou amélioration de l’image
-- La date retenue sert au nom de fichier et, si activée, à la date imprimée sur le tampon
+- Si la date ou l'heure manque encore, nouvelle lecture après redressement ou amélioration de l’image, sans écraser une correction manuelle
+- **Repas proposé** : de 10:00 à 14:00 inclus, « midi » ; de 18:00 à 00:00 inclus, « soir ». À 14:01 ou 00:01, aucun libellé automatique
+- Les horaires d'ouverture, plages horaires et heures invalides sont écartés ; une lecture ambiguë ou trop incertaine ne choisit pas de repas
+- Le repas peut être modifié ou retiré. Il suit la date sur le tampon (`06/10/2026 · midi`) et dans le nom de fichier
 - Chaque nouveau ticket repart avec une date vide ; la date doit être renseignée avant l'export
 
 La proposition reste à vérifier : un ticket froissé, flou, peu contrasté ou une date atypique peut nécessiter une correction. Le premier lancement du moteur prend plus de temps ; après 45 secondes sans résultat, l'application propose la saisie manuelle.
@@ -53,14 +55,20 @@ La proposition reste à vérifier : un ticket froissé, flou, peu contrasté ou 
 
 ### Export
 - **PNG** haute qualité (2400px max)
-- **PDF** proportionnel à la photo
-- Nom de fichier automatique : `NDF_JJMMAAAA.png`
+- **PDF photo** proportionnel à la photo
+- **PDF importé** : ajoute le tampon à la page choisie et conserve toutes les pages, le texte natif et les formulaires. La marge est également disponible
+- « Retoucher une copie de cette page » permet de recadrer ou filtrer un PDF scanné ; cet export contient alors uniquement la page choisie, sous forme d'image
+- Nom numéroté par date sur cet appareil, par exemple `NDF_06102026_midi_02.pdf` ; un même ticket garde son numéro entre PNG et PDF
 - Partage natif iOS/Android (Web Share API) ou téléchargement direct
 - Une annulation du partage conserve le ticket et n'incrémente pas le compteur
 - Rendus **Original / Lisible / N&B** : compensation locale de l’éclairage, contraste doux et netteté limitée pour conserver les impressions pâles
 - Le N&B conserve des niveaux de gris ; aucun texte manquant n’est reconstitué
 - Les filtres partent toujours du recadrage sans filtre, avec retour immédiat à l’original
 - Les traitements photo sont exécutés dans un Web Worker local pour garder l’interface réactive
+- Indications non bloquantes de flou, reflet localisé, manque de lumière ou bord possiblement coupé ; ce sont des aides visuelles, pas une garantie de lisibilité
+- Zoom de lecture indépendant du tampon, avec comparaison à l'original en maintenant le bouton
+
+L'export produit un nouveau fichier. La conservation de signatures numériques existantes dans un PDF n'est pas prise en charge.
 
 ### Interface
 - Accueil « Cuivre » : fond sombre chaud, grand titre et actions compactes
@@ -68,6 +76,8 @@ La proposition reste à vérifier : un ticket froissé, flou, peu contrasté ou 
 - Icônes SVG (Tabler Icons, MIT)
 - Animations fluides
 - Safe area iOS (notch, barre home)
+- Éditeur sur un écran : image, date, repas et deux exports toujours visibles ; rotation, taille et marge regroupées dans « Ajuster »
+- Reprise temporaire d'un ticket sur cet appareil, **désactivée par défaut**, disponible pendant 24 h et effacée après export ou désactivation
 - Vibration haptique Android
 - Compteurs personnel et communautaire persistés sur le VPS, sans compte utilisateur
 - Compteur personnel historique repris automatiquement sur l'appareil qui le détient
@@ -119,21 +129,25 @@ npm test
 npm run test:counters
 npm run test:ocr
 npm run test:images
+npm run test:meals
 python3 scripts/dev-server.py --port 8780
 ```
 
-Le serveur de développement reprend la politique de sécurité Nginx et utilise une base isolée dans `.test-output/dev-counters.sqlite3`, sans contacter le compteur réel. Il désactive le cache Service Worker pour rendre les modifications immédiatement visibles ; les essais hors ligne doivent être effectués sur un hébergement avec le véritable `sw.js`.
+Le serveur de développement reprend la politique de sécurité Nginx et utilise une base isolée dans `.test-output/dev-counters.sqlite3`, sans contacter le compteur réel. Il désactive le cache Service Worker pour rendre les modifications immédiatement visibles ; l'option `--pwa` sert le véritable `sw.js` pour les essais hors ligne.
 
-Les ressources OCR et PDF sont incluses dans `vendor/ocr/` et `vendor/pdfjs/` avec leurs licences et empreintes SHA-256. Pour les régénérer depuis les versions verrouillées par `package-lock.json` :
+Les ressources OCR et PDF sont incluses dans `vendor/ocr/`, `vendor/pdfjs/` et `vendor/pdf-lib/` avec leurs licences et empreintes SHA-256. Pour les régénérer depuis les versions verrouillées par `package-lock.json` :
 
 ```bash
 npm run vendor:ocr
 npm run vendor:pdf
+npm run vendor:pdf-export
 ```
 
 `npm test` couvre les dates, l'isolation des tickets, les annulations de partage, la géométrie du tampon et la synchronisation des compteurs. `npm run test:counters` vérifie la migration, les doublons, les accès concurrents, la persistance, les sauvegardes et les origines autorisées. `npm run test:ocr` exécute le vrai moteur sur huit tickets synthétiques (dates françaises, ISO, ambiguës, absentes ou invalides) ; ce jeu ne mesure pas la précision sur des photos réelles. Les résultats sont écrits dans `.test-output/ocr-results.json`.
 
 `npm run test:images` construit trois scènes connues (perspective, ombre, fond clair/foncé), mesure l’erreur des coins et exécute le vrai OCR après traitement. Les images avant/après et les résultats restent dans `.test-output/images/`. Les tests unitaires vérifient aussi les limites géométriques, la préservation de l’original, des impressions pâles et l’annulation des traitements tardifs.
+
+`npm run test:meals` lit six tickets synthétiques avec le vrai moteur OCR, dont les limites 14:01 et 00:01. Les tests unitaires couvrent aussi l'ambiguïté, la correction manuelle, les brouillons, la numérotation concurrente et les PDF natifs avec rotations, marges, texte et formulaires. Voir [la validation 1.10.0](docs/validation-1.10.0.md).
 
 ---
 
@@ -143,6 +157,10 @@ npm run vendor:pdf
 - `receipt.js` : formats de date et état propre à chaque ticket
 - `ocr.js` + `vendor/ocr/` : moteur Tesseract.js 7.0.0 et modèle français
 - `pdf-import.js` + `vendor/pdfjs/` : lecture et rendu local avec PDF.js 6.4.299
+- `pdf-export.js` + `vendor/pdf-lib/` : ajout du tampon au PDF original avec pdf-lib 1.17.1
+- `local-store.js` : reprise temporaire facultative et numérotation dans IndexedDB
+- `document-analysis.js` : analyse locale des zones imprimées et des défauts photo possibles
+- `receipt-viewer.js` : zoom et comparaison à l'original
 - `counters.js` + `server/counters.py` : synchronisation anonyme et stockage SQLite sur le VPS
 - `image-processing.js`, `image-tools.js`, `image-worker.js` : détection, homographie, rééchantillonnage et amélioration locale, sans service distant ni génération d’image
 - `stamp-renderer.js` : rendu Canvas partagé entre aperçu et exports
@@ -157,7 +175,9 @@ npm run vendor:pdf
 
 ## Vie privée
 
-Les photos, PDF, le texte reconnu et la date ne sont pas envoyés à un service OCR : ils restent dans le navigateur jusqu'à l'export ou au partage choisi par l'utilisateur. L'application ne conserve pas d'historique des tickets et ne demande pas de compte.
+Les photos, PDF, le texte reconnu, la date et l'heure ne sont pas envoyés à un service OCR : ils restent dans le navigateur jusqu'à l'export ou au partage choisi par l'utilisateur. L'application ne conserve pas d'historique des justificatifs et ne demande pas de compte.
+
+La reprise après fermeture est désactivée par défaut. Si elle est activée, un seul ticket et ses réglages sont enregistrés dans IndexedDB sur cet appareil, avec une disponibilité de 24 h. L'export, la désactivation ou le remplacement par un nouveau ticket efface ce brouillon ; un brouillon expiré est supprimé à la prochaine consultation. Les index de numérotation par date restent locaux, sans image ni texte du justificatif.
 
 Les fichiers de l'application, le lecteur PDF et le modèle OCR sont téléchargés depuis le même hébergement. Google Fonts fournit les polices. Le VPS reçoit un identifiant aléatoire propre au navigateur, le total personnel historique et des identifiants d'export pour dédupliquer les incréments ; il ne reçoit ni justificatif, ni adresse de tampon, ni montant, ni date. L'identifiant du navigateur est stocké sous forme d'empreinte dans la base. Le service de compteurs désactive ses journaux d'accès ; les requêtes réseau communiquent les métadonnées habituelles de connexion aux hébergeurs. Sans compte, effacer les données du navigateur ou changer d'appareil ne permet pas de retrouver son compteur personnel.
 

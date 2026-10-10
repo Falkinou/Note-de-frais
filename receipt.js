@@ -16,12 +16,43 @@
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || "");
     return !!match && isoDate(match[3], match[2], match[1]) === value;
   }
-  function displayDate(value) {
-    return validDate(value) ? value.slice(8) + "/" + value.slice(5, 7) + "/" + value.slice(0, 4) : "";
+  function displayDate(value, meal = "") {
+    return validDate(value) ? value.slice(8) + "/" + value.slice(5, 7) + "/" + value.slice(0, 4) + (validMeal(meal) && meal ? " · " + meal : "") : "";
   }
-  function filename(value, extension = "png") {
-    return "NDF_" + (validDate(value) ? value.slice(8) + value.slice(5, 7) + value.slice(0, 4) : "sans-date") + "." + extension;
+  function validMeal(value) { return ["", "midi", "soir"].includes(value); }
+  function filename(value, extension = "png", meal = "", sequence = "") {
+    return "NDF_" + (validDate(value) ? value.slice(8) + value.slice(5, 7) + value.slice(0, 4) : "sans-date") +
+      (validMeal(meal) && meal ? "_" + meal : "") + (sequence !== "" ? "_" + String(sequence).padStart(2, "0") : "") + "." + extension;
   }
+  function mealAt(time) {
+    const match = /^(\d{2}):(\d{2})$/.exec(time || "");
+    if (!match || +match[1] > 23 || +match[2] > 59) return "";
+    const minutes = +match[1] * 60 + +match[2];
+    return minutes >= 600 && minutes <= 840 ? "midi" : minutes >= 1080 || minutes === 0 ? "soir" : "";
+  }
+  function extractTimes(text) {
+    const times = new Map(), lines = String(text || "").split(/\r?\n/);
+    lines.forEach((raw, index) => {
+      const line = normalize(raw);
+      // Opening hours, validity periods and numbers are not a purchase time.
+      if (/ouvert|fermet|horaires?|service\s+(?:du|de)|validite|expir|echeance|tel(?:ephone)?\b|fax\b/.test(line)) return;
+      if (/\d\s*(?:h|:)\s*\d{0,2}\s*(?:-|–|a|au)\s*\d/.test(line)) return;
+      const dates = extractDates(raw).candidates;
+      const previous = index ? extractDates(lines[index - 1]).candidates : [];
+      const date = dates.length === 1 ? dates[0].iso : previous.length === 1 ? previous[0].iso : "";
+      const regex = /(?:^|[^\d:.])(\d{1,2})\s*([:h])\s*(\d{2})(?:\s*:\s*(\d{2}))?\s*(am|pm)?(?![\d:]|\s*[ap]m)/g;
+      for (const match of line.matchAll(regex)) {
+        let hour = +match[1]; const minute = +match[3];
+        if (minute > 59 || (match[4] && +match[4] > 59)) continue;
+        if (match[5]) { if (hour < 1 || hour > 12) continue; hour = hour % 12 + (match[5] === "pm" ? 12 : 0); }
+        if (hour > 23) continue;
+        const time = String(hour).padStart(2, "0") + ":" + String(minute).padStart(2, "0");
+        times.set(date + "|" + time, { time, meal: mealAt(time), date, evidence: raw.trim().slice(0, 180) });
+      }
+    });
+    return Array.from(times.values());
+  }
+  function extractDetails(text) { return { ...extractDates(text), times: extractTimes(text) }; }
   function extractDates(text) {
     const results = new Map();
     const monthPattern = months.map((m, i) => m + "|" + aliases[i] + "\\.?").join("|");
@@ -65,20 +96,40 @@
       this.dateSource = "";
       this.ocrStatus = "reading";
       this.candidates = [];
+      this.times = [];
+      this.meal = "";
+      this.mealSource = "";
+      this.timeStatus = "missing";
       this.cancelled = false;
       this.revision = 0;
     }
     setDate(value, source = "manual") {
       this.date = validDate(value) ? value : "";
       this.dateSource = source;
+      this.refreshMeal();
+    }
+    setMeal(value) {
+      if (!validMeal(value)) return;
+      this.meal = value; this.mealSource = "manual";
+    }
+    refreshMeal() {
+      if (this.mealSource === "manual") return;
+      const matching = this.times.filter(time => !time.date || time.date === this.date);
+      const labels = new Set(matching.map(time => time.meal));
+      this.timeStatus = matching.length ? labels.size === 1 ? "found" : "ambiguous" : "missing";
+      this.meal = this.date && this.timeStatus === "found" ? matching[0].meal : "";
+      this.mealSource = this.meal ? "ocr" : "";
     }
     applyOCR(result) {
       if (this.cancelled) return;
       this.ocrStatus = result.status;
       this.candidates = result.candidates || [];
-      if (this.dateSource === "manual") return;
-      this.date = result.status === "found" && this.candidates.length === 1 ? this.candidates[0].iso : "";
-      this.dateSource = this.date ? "ocr" : "";
+      if (result.times) this.times = result.timeUncertain ? [] : result.times;
+      if (this.dateSource !== "manual") {
+        this.date = result.status === "found" && this.candidates.length === 1 ? this.candidates[0].iso : this.date;
+        this.dateSource = this.date ? "ocr" : "";
+      }
+      this.refreshMeal();
     }
     replaceImage(image) {
       this.image = image;
@@ -88,5 +139,5 @@
     }
     cancel() { this.cancelled = true; }
   }
-  return { isoDate, validDate, displayDate, filename, extractDates, Session };
+  return { isoDate, validDate, validMeal, displayDate, filename, extractDates, extractTimes, extractDetails, mealAt, Session };
 });

@@ -62,3 +62,37 @@ test("ticket B indépendant du filtre et de la date du ticket A", () => {
   assert.equal(b.original, "B cropped");
   assert.equal(b.enhanced, false);
 });
+test('plages repas exactes : 10 h à 14 h et 18 h à minuit',()=>{
+  for(const time of ['10:00','12:43','13:59','14:00'])assert.equal(Receipt.mealAt(time),'midi',time);
+  for(const time of ['18:00','20:35','23:59','00:00'])assert.equal(Receipt.mealAt(time),'soir',time);
+  for(const time of ['09:59','14:01','17:59','00:01','24:00','12:61',''])assert.equal(Receipt.mealAt(time),'',time);
+});
+test('lecture des heures imprimées, avec secondes, h et AM/PM',()=>{
+  for(const value of ['13:50:07','13 h 50','1:50 PM']){
+    const detail=Receipt.extractDetails('mardi 6 octobre 2026 à '+value),ticket=new Receipt.Session(1,'image');ticket.applyOCR(detail);
+    assert.equal(ticket.date,'2026-10-06');assert.equal(ticket.meal,'midi');assert.equal(ticket.times[0].time,'13:50');
+  }
+  assert.equal(Receipt.extractTimes('Heure : 12:00 AM')[0].meal,'soir');
+});
+test('horaires d’ouverture, plages et heures invalides ne donnent pas un repas',()=>{
+  for(const text of ['Ouvert de 10:00 à 23:00','Horaires : 12h00','10:00 - 14:00','Tel 12:45','Heure 25:30','Heure 12:99','12:30:99','10.50 EUR'])assert.deepEqual(Receipt.extractTimes(text),[],text);
+});
+test('heures ambiguës : pas de midi/soir inventé, choix manuel prioritaire',()=>{
+  const ticket=new Receipt.Session(1,'image');ticket.applyOCR(Receipt.extractDetails('06/10/2026\n12:43\n20:15'));
+  assert.equal(ticket.meal,'');assert.equal(ticket.timeStatus,'ambiguous');ticket.setMeal('soir');ticket.applyOCR(Receipt.extractDetails('06/10/2026 12:43'));assert.equal(ticket.meal,'soir');
+  ticket.setMeal('');ticket.applyOCR(Receipt.extractDetails('06/10/2026 12:43'));assert.equal(ticket.meal,'');
+});
+test('l’heure suit la date choisie et une lecture faible ne préremplit pas le repas',()=>{
+  const ticket=new Receipt.Session(1,'image');ticket.applyOCR(Receipt.extractDetails('06/10/2026 12:43\n07/10/2026 20:15'));
+  assert.equal(ticket.meal,'');ticket.setDate('2026-10-07');assert.equal(ticket.meal,'soir');ticket.setDate('2026-10-06');assert.equal(ticket.meal,'midi');
+  ticket.applyOCR({...Receipt.extractDetails('06/10/2026 12:43'),timeUncertain:true});assert.equal(ticket.meal,'');
+});
+test('le suffixe repas suit la date dans le tampon et le nom numéroté',()=>{
+  assert.equal(Receipt.displayDate('2026-10-06','midi'),'06/10/2026 · midi');
+  assert.equal(Receipt.filename('2026-10-06','pdf','soir',2),'NDF_06102026_soir_02.pdf');
+  assert.equal(Receipt.filename('2026-10-06','png','',1),'NDF_06102026_01.png');
+});
+test('une relecture sans heure ni date ne supprime pas une date déjà trouvée',()=>{
+  const ticket=new Receipt.Session(1,'image');ticket.applyOCR(Receipt.extractDetails('06/10/2026'));
+  ticket.applyOCR({status:'missing',candidates:[],times:[]});assert.equal(ticket.date,'2026-10-06');
+});

@@ -1,6 +1,6 @@
 {
   "name": "stampfel",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "private": true,
   "scripts": {
     "test": "node --test tests/*.test.cjs",
@@ -8,14 +8,18 @@
     "vendor:pdf": "node scripts/vendor-pdf.mjs",
     "test:counters": "python3 -m unittest discover -s tests -p 'test_*.py'",
     "test:ocr": "node scripts/test-ocr.cjs",
-    "test:images": "node scripts/test-images.cjs"
+    "test:images": "node scripts/test-images.cjs",
+    "vendor:pdf-export": "node scripts/vendor-pdf-export.mjs",
+    "test:meals": "node scripts/test-meals.cjs"
   },
   "dependencies": {
     "@tesseract.js-data/fra": "1.0.0",
+    "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.4.299",
     "tesseract.js": "7.0.0"
   },
   "devDependencies": {
-    "@napi-rs/canvas": "1.0.10"
+    "@napi-rs/canvas": "1.0.10",
+    "fake-indexeddb": "6.2.5"
   }
 }
