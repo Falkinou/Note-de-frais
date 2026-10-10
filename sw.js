@@ -1,5 +1,5 @@
 "use strict";
-const CACHE = "stampfel-v1.10.0";
+const CACHE = "stampfel-v1.10.1";
 const ROOT = new URL("./", self.location.href);
 const SHELL = ["./", "index.html", "app.js", "app.css", "receipt.js", "stamp-renderer.js", "ocr.js", "export-file.js", "counters.js", "pdf-import.js",
   "image-processing.js", "image-tools.js", "image-worker.js", "document-analysis.js", "pdf-export.js", "local-store.js", "receipt-viewer.js", "manifest.webmanifest", "assets/icon-180.png", "assets/icon-192.png", "assets/icon-512.png"];
