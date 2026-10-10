@@ -14,6 +14,16 @@ test("dates impossibles, numéros et validité ne deviennent pas une date de tic
   }
   assert.equal(Receipt.extractDates("29/02/2024").status, "found");
 });
+test("espaces ajoutés par l’OCR dans les chiffres d’une date", () => {
+  for (const text of ["Date : 1 0/ 1 0/ 2026 111, Quai", "1 0 / 1 0 / 2 0 2 6", "2 0 2 6-1 0-1 0"]) {
+    const result = Receipt.extractDates(text);
+    assert.equal(result.status, "found", text);
+    assert.equal(result.candidates[0].iso, "2026-10-10", text);
+  }
+  for (const text of ["3 1/0 2/2026", "Expiration 1 0/1 0/2026", "Tel 01 02 20 26 78"]) {
+    assert.equal(Receipt.extractDates(text).status, "missing", text);
+  }
+});
 test("dates différentes ambiguës, répétition de la même date dédupliquée", () => {
   assert.equal(Receipt.extractDates("07/10/2026\n08/10/2026").status, "ambiguous");
   assert.equal(Receipt.extractDates("08/10/2026\n08.10.2026").candidates.length, 1);
@@ -41,12 +51,12 @@ test("une date incertaine ou plusieurs dates attendent un choix", () => {
   ticket.applyOCR(Receipt.extractDates("07/10/2026\n08/10/2026"));
   assert.equal(ticket.date, "");
 });
-test("ticket B indépendant du filtre, de la date et du mode rapide du ticket A", () => {
-  const a = new Receipt.Session(1, "A", true);
+test("ticket B indépendant du filtre et de la date du ticket A", () => {
+  const a = new Receipt.Session(1, "A");
   a.setDate("2026-10-08"); a.enhanced = true; a.image = "A enhanced"; a.cancel();
   const b = new Receipt.Session(2, "B");
   a.applyOCR(Receipt.extractDates("07/10/2026"));
-  assert.deepEqual([b.image, b.original, b.enhanced, b.express, b.date], ["B", "B", false, false, ""]);
+  assert.deepEqual([b.image, b.original, b.enhanced, b.date], ["B", "B", false, ""]);
   b.replaceImage("B cropped");
   assert.equal(b.source, "B", "le recadrage et la rotation conservent la photo utilisée par la lecture");
   assert.equal(b.original, "B cropped");

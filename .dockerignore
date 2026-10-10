@@ -1,0 +1,6 @@
+.git
+node_modules
+.test-output
+tests
+docs
+.DS_Store

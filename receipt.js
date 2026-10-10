@@ -26,7 +26,12 @@
     const results = new Map();
     const monthPattern = months.map((m, i) => m + "|" + aliases[i] + "\\.?").join("|");
     for (const raw of String(text || "").split(/\r?\n/)) {
-      const line = normalize(raw);
+      // Compact only numeric date-shaped runs, ISO first to avoid reading the
+      // end of a spaced year as a separate day/month/year date.
+      const compact = value => value.replace(/(\d)[ \t]+(?=\d)/g, "$1");
+      const line = normalize(raw)
+        .replace(/(?:^|[^\d/.-])(\d(?:[ \t]*\d){3})\s*[-/.]\s*(\d(?:[ \t]*\d)?)\s*[-/.]\s*(\d(?:[ \t]*\d)?)(?!\d|[/.\-]\s*\d)/g, compact)
+        .replace(/(?:^|[^\d/.-])(\d(?:[ \t]*\d)?)\s*[-/.]\s*(\d(?:[ \t]*\d)?)\s*[-/.]\s*(\d(?:[ \t]*\d){3}|\d[ \t]*\d)(?!\d|[/.\-]\s*\d)/g, compact);
       // These dates describe validity, a card, or a deadline, not the purchase.
       if (/expir|valable|validite|peremption|echeance|naissance/.test(line)) continue;
       function collect(regex, parts) {
@@ -50,13 +55,12 @@
   }
   // One instance per ticket; a late OCR result can never overwrite manual input.
   class Session {
-    constructor(id, source, express = false) {
+    constructor(id, source) {
       this.id = id;
       this.source = source;
       this.original = source;
       this.image = source;
       this.enhanced = false;
-      this.express = express;
       this.date = "";
       this.dateSource = "";
       this.ocrStatus = "reading";

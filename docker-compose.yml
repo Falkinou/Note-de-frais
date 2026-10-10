@@ -1,0 +1,54 @@
+name: stampfel
+
+services:
+  web:
+    build:
+      context: .
+    container_name: stampfel-web
+    restart: unless-stopped
+    depends_on:
+      counters:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=mca-public
+      - traefik.http.routers.stampfel.rule=Host(`${STAMPFEL_DOMAIN:-stampfel.mycloudapi.fr}`)
+      - traefik.http.routers.stampfel.entrypoints=websecure
+      - traefik.http.routers.stampfel.tls=true
+      - traefik.http.routers.stampfel.tls.certresolver=letsencrypt
+      - traefik.http.services.stampfel.loadbalancer.server.port=8080
+    networks:
+      - public
+      - private
+
+  counters:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 96m
+    cpus: 0.50
+    environment:
+      LEGACY_COUNTER_SEED: ${STAMPFEL_LEGACY_COUNT:?Set the verified legacy community count before first deployment}
+      LEGACY_COUNTER_URL: https://stampcounter.flkn68.workers.dev/get
+      ALLOWED_ORIGINS: https://${STAMPFEL_DOMAIN:-stampfel.mycloudapi.fr},https://falkinou.github.io
+    volumes:
+      - counters:/data
+    networks:
+      - private
+
+networks:
+  public:
+    external: true
+    name: mca-public
+  private:
+
+volumes:
+  counters:

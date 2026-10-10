@@ -19,7 +19,9 @@ function ic(name,sz){
     home:'<path d="M5 12l-2 0l9-9l9 9l-2 0"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/><path d="M9 21v-6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v6"/>',
     search:'<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>',
     check:'<polyline points="20 6 9 17 4 12"/>',
-    back:'<path d="M19 12H5M12 19l-7-7 7-7"/>'
+    back:'<path d="M19 12H5M12 19l-7-7 7-7"/>',
+    edit:'<path d="M16 3l5 5L8 21H3v-5L16 3z"/><path d="M14 5l5 5"/>',
+    import:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-7M9 14l3-3 3 3"/>'
   };
   return s+(paths[name]||'')+'</svg>';
 }
@@ -53,18 +55,15 @@ var DS={address:"Orange SA\n111, Quai du Pr\u00e9sident Roosevelt,\n92130 Issy L
 
 var S,scr="home",img=null,imgFull=null,sp={x:60,y:70},tt;
 var crop={x1:10,y1:10,x2:90,y2:90},cropDrag=null;
-var stampCount=0;
 var ndfDate="";
-var saveMethod="share";
 var imgEnhanced=false;
 var imgOriginal=null;
-var ticket=null, ticketSequence=0, importSequence=0, exportBusy=false, expressReturnTimer=null;
+var ticket=null, ticketSequence=0, importSequence=0, exportBusy=false;
+var pdfImport=null, pdfPage=1, pdfPreviewSequence=0, pendingAppReload=false;
 var stampCache=null, imageWidth=0, imageHeight=0, editorObserver=null;
 
 try{var r=localStorage.getItem("ndf_stamp_v10");S=r?Object.assign({},DS,JSON.parse(r)):Object.assign({},DS)}catch(e){S=Object.assign({},DS)}
-try{stampCount=parseInt(localStorage.getItem("ndf_count"))||0}catch(e){}
 try{var lp=JSON.parse(localStorage.getItem("ndf_lastpos"));if(lp&&lp.x)sp=lp}catch(e){}
-try{var sm=localStorage.getItem("ndf_savemethod");if(sm)saveMethod=sm}catch(e){}
 S.address=typeof S.address==="string"?S.address.slice(0,500):DS.address;
 S.scale=Math.max(.3,Math.min(2.5,Number(S.scale)||1));
 S.rotation=Math.max(-180,Math.min(180,Number(S.rotation)||0));
@@ -72,22 +71,27 @@ S.fontIdx=Number.isInteger(S.fontIdx)&&FONTS[S.fontIdx]?S.fontIdx:DS.fontIdx;
 S.colorIdx=Number.isInteger(S.colorIdx)&&SC[S.colorIdx]?S.colorIdx:0;
 S.shape=S.shape==="circle"?"circle":"rect";
 if(!/^#[0-9a-f]{3,8}$/i.test(S.textColor))S.textColor=DS.textColor;
-if(!["share","download"].includes(saveMethod))saveMethod="share";
-var globalCount=null;
-var COUNTER_URL="https://stampcounter.flkn68.workers.dev";
-
-function incCount(){
-  stampCount++;try{localStorage.setItem("ndf_count",String(stampCount))}catch(e){}
-  fetch(COUNTER_URL+"/hit").then(function(r){return r.json()}).then(function(d){
-    if(d&&d.count!=null){globalCount=d.count;var el=document.getElementById("globalCounter");if(el)el.textContent=d.count}
-  }).catch(function(){});
+function randomHex(bytes){return Array.from(crypto.getRandomValues(new Uint8Array(bytes))).map(function(value){return value.toString(16).padStart(2,'0')}).join('')}
+function eventId(){var hex=randomHex(16);return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20)}
+var counters=StampfelCounters.create({
+  storage:{getItem:function(key){return localStorage.getItem(key)},setItem:function(key,value){localStorage.setItem(key,value)}},
+  fetch:window.fetch.bind(window),randomId:eventId,randomDevice:function(){return randomHex(32)},
+  locks:navigator.locks,
+  url:location.hostname==='falkinou.github.io'?'https://stampfel.mycloudapi.fr/api/counters':'/api/counters',
+  onChange:updateCounters
+});
+function updateCounters(values){
+  var personal=document.getElementById('personalCounter'),community=document.getElementById('globalCounter');
+  if(personal)personal.textContent=values.personal.toLocaleString('fr-FR');
+  if(community)community.textContent=values.community===null?'—':values.community.toLocaleString('fr-FR');
 }
-function initGlobalCount(){
-  fetch(COUNTER_URL+"/get").then(function(r){return r.json()}).then(function(d){
-    if(d&&d.count!=null){globalCount=d.count;var el=document.getElementById("globalCounter");if(el)el.textContent=d.count}
-    else{var el2=document.getElementById("globalCounter");if(el2)el2.textContent="0"}
-  }).catch(function(){var el3=document.getElementById("globalCounter");if(el3)el3.textContent="—"});
+function incCount(current){
+  if(current.counted)return;
+  current.counted=true;
+  void counters.record(current.counterEvent);
 }
+window.addEventListener('online',function(){void counters.sync()});
+window.addEventListener('storage',function(event){if(event.key===StampfelCounters.KEY)counters.refresh()});
 function savePos(){try{localStorage.setItem("ndf_lastpos",JSON.stringify(sp))}catch(e){}}
 
 // Smart stamp positioning: analyze image to find the emptiest zone
@@ -206,7 +210,8 @@ async function readTicketDate(current){
   var revision=current.ocrRevision=(current.ocrRevision||0)+1;
   current.ocrStatus="reading";updateDateUI();
   try{
-    var result=await ReceiptOCR.recognize(current.source);
+    var result=current.pdfText?Receipt.extractDates(current.pdfText):null;
+    if(!result||result.status==='missing')result=await ReceiptOCR.recognize(current.source);
     if(ticket!==current||current.cancelled||current.ocrRevision!==revision)return;
     current.applyOCR(result);
   }catch(error){if(ticket!==current||current.cancelled||current.ocrRevision!==revision)return;current.applyOCR({status:"error",candidates:[]})}
@@ -229,70 +234,28 @@ function render(){
   else if(scr==="stamp")renderStamp(el);
   else if(scr==="crop")renderCrop(el);
   else if(scr==="edit")renderEdit(el);
+  else if(scr==="pdf")renderPDFPicker(el);
   if(scr==="edit"||scr==="crop")updateDateUI();
 }
 
 // ── HOME ──
 function renderHome(el){
-  var fl=esc(S.address.split("\n")[0]);
-  var fl2=S.address.split("\n").length>1?esc(S.address.split("\n").slice(1).map(function(line){return line.trim().replace(/,+$/,"")}).join(", ")):"";
-  var h='<div class="scr" style="padding-bottom:40px">';
-
-  // Header: Stampfel centered
-  h+='<div style="padding:32px 24px 24px;padding-top:max(32px,calc(env(safe-area-inset-top,20px) + 24px));text-align:center">';
-  h+='<div style="font-family:\'Darker Grotesque\',sans-serif;font-size:60px;font-weight:900;letter-spacing:-.04em;line-height:.75"><span style="color:#fff">Stamp</span><span style="color:#fb923c">fel</span></div>';
-  h+='</div>';
-
-  // Stamp preview card — floating glass
-  h+='<div style="padding:0 20px;animation:fadeUp .5s ease .05s both">';
-  h+='<button type="button" class="glass stamp-home-card" onclick="window._go(\'stamp\')" aria-label="Configurer mon tampon">';
-  h+='<div style="display:flex;align-items:center;gap:16px">';
-  h+='<div style="background:rgba(255,255,255,.92);border-radius:14px;padding:12px 14px;flex:1;min-width:0;overflow-wrap:anywhere">';
-  h+='<div style="font-family:\'Instrument Sans\',sans-serif;font-size:11px;font-weight:700;color:#111;text-align:center;line-height:1.5">'+fl+'</div>';
-  if(fl2)h+='<div style="font-family:\'Instrument Sans\',sans-serif;font-size:9px;font-weight:500;color:#555;text-align:center;line-height:1.4;margin-top:1px">'+fl2+'</div>';
-  h+='</div>';
-  h+='<div style="flex:0 0 102px;min-width:0">';
-  h+='<div style="font-family:\'Instrument Sans\',sans-serif;font-size:16px;font-weight:700;color:#fff">Mon Tampon</div>';
-  h+='<div style="font-family:\'Instrument Sans\',sans-serif;font-size:12px;color:rgba(255,255,255,.85);margin-top:3px">Configurer →</div>';
-  h+='</div></div></button>';
-
-  // Save preference — compact inline
-  h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:0 24px;margin-bottom:16px;animation:fadeUp .5s ease .1s both">';
-  h+='<span style="font-family:\'Instrument Sans\',sans-serif;font-size:12px;color:rgba(255,255,255,.75)">Sauvegarde</span>';
-  h+='<div style="display:flex;gap:2px">';
-  h+='<button type="button" class="save-method" onclick="window._setSaveMethod(\'share\')" style="cursor:pointer;font-family:\'Instrument Sans\',sans-serif;font-size:11px;padding:5px 12px;border-radius:8px;'+(saveMethod==="share"?"background:rgba(251,146,60,.1);color:rgba(251,146,60,.9);font-weight:600":"color:rgba(255,255,255,.85)")+'">'+ic("share",12)+' Partager</button>';
-  h+='<button type="button" class="save-method" onclick="window._setSaveMethod(\'download\')" style="cursor:pointer;font-family:\'Instrument Sans\',sans-serif;font-size:11px;padding:5px 12px;border-radius:8px;'+(saveMethod==="download"?"background:rgba(251,146,60,.1);color:rgba(251,146,60,.9);font-weight:600":"color:rgba(255,255,255,.85)")+'">'+ic("download",12)+' Direct</button>';
-  h+='</div></div>';
-
-  // Action buttons
-  h+='<div style="padding:0 20px;display:flex;flex-direction:column;gap:10px;animation:fadeUp .5s ease .15s both">';
-  h+='<button class="primary-btn" onclick="window._express()">'+ic('bolt',18)+' Mode Rapide</button>';
-  h+='<button class="glass-btn" onclick="window._showComplet()">'+ic('camera',18)+' Mode Complet</button>';
-  h+='<div id="completChoice" style="display:none;animation:fadeUp .3s ease">';
-  h+='<div style="display:flex;gap:8px;margin-top:2px">';
-  h+='<button class="sec-btn" onclick="window._cam()" style="flex:1;padding:14px;font-size:13px">'+ic('camera',14)+' Photo</button>';
-  h+='<button class="sec-btn" onclick="window._gal()" style="flex:1;padding:14px;font-size:13px">'+ic('image',14)+' Importer</button>';
-  h+='</div></div>';
-  h+='</div></div>';
-
-  // Counters — minimal, centered
-  h+='<div style="margin-top:28px;display:flex;justify-content:center;gap:24px;animation:fadeUp .5s ease .25s both">';
-  if(stampCount>0){
-    h+='<div style="text-align:center"><div style="font-family:monospace;font-size:22px;font-weight:700;color:rgba(251,146,60,.7)">'+stampCount+'</div><div style="font-size:10px;color:rgba(255,255,255,.95);margin-top:2px">perso</div></div>';
-    h+='<div style="width:1px;height:30px;background:rgba(255,255,255,.06)"></div>';
-  }
-  h+='<div style="text-align:center"><div id="globalCounter" style="font-family:monospace;font-size:22px;font-weight:700;color:rgba(255,255,255,.95)">'+(globalCount==null?"...":globalCount)+'</div><div style="font-size:10px;color:rgba(255,255,255,.95);margin-top:2px">communauté</div></div>';
-  h+='</div>';
-
-  // Privacy — single line
-  h+='<div style="margin-top:28px;text-align:center;font-family:\'Instrument Sans\',sans-serif;font-size:10px;color:rgba(255,255,255,.85);animation:fadeUp .5s ease .3s both">'+ic('lock',12)+' Photos et lecture de date traitées sur votre appareil</div>';
-
-  // Copyright
-  h+='<div style="margin-top:12px;text-align:center"><p style="font-size:9px;color:rgba(255,255,255,.85);letter-spacing:.02em">© '+new Date().getFullYear()+' Lo\u00efc Arnold · v1.7.0</p></div>';
-
-  h+='<div class="blob1"></div><div class="blob2"></div>';
-  el.innerHTML=h;
-  initGlobalCount();
+  if(pendingAppReload){location.reload();return}
+  var title=S.address.split("\n")[0]||'Votre tampon';
+  el.innerHTML='<main class="scr home">'+
+    '<header class="home-brand"><h1>Stamp<span>fel</span></h1><span class="brand-rule" aria-hidden="true"></span></header>'+
+    '<button type="button" class="home-stamp" onclick="window._go(\'stamp\')" aria-label="Modifier mon tampon : '+esc(title)+'">'+
+      '<span class="home-stamp-paper"><img src="'+stampLayer(true).url+'" alt="" draggable="false"></span>'+
+      '<span class="home-stamp-label"><span>Mon tampon</span><strong>'+esc(title)+'</strong></span>'+
+      '<span class="home-stamp-edit">'+ic('edit',18)+'<span>Modifier</span></span></button>'+
+    '<section class="home-actions" aria-labelledby="newTicketTitle"><h2 id="newTicketTitle">Nouveau ticket</h2>'+
+      '<button type="button" class="primary-btn home-photo" onclick="window._cam()">'+ic('camera',22)+'Photographier un ticket</button>'+
+      '<button type="button" class="home-import" onclick="window._gal()" aria-label="Importer une image ou un PDF">'+ic('import',22)+'Importer</button></section>'+
+    '<dl class="home-stats" aria-label="Tickets traités"><div><dd id="personalCounter">—</dd><dt>personnel</dt></div><div><dd id="globalCounter">—</dd><dt>communauté</dt></div></dl>'+
+    '</main>';
+  updateCounters(counters.snapshot());
+  void counters.sync();
+  stampFontReady().then(function(){if(scr==='home'){var preview=document.querySelector('.home-stamp-paper img');if(preview)preview.src=stampLayer(true).url}});
 }
 
 // ── STAMP CONFIG ──
@@ -513,7 +476,7 @@ function renderEdit(el){
     '<div class="glass edit-field date-panel"><label for="ndfDateIn">Date du ticket</label><input id="ndfDateIn" type="date" value="'+ndfDate+'" oninput="window._setDate(this.value)" aria-describedby="dateStatus"><p id="dateStatus" role="status" aria-live="polite"></p><div id="dateChoices"></div><button id="retryDate" class="date-retry" onclick="window._retryDate()" type="button">Relire la date</button></div>'+
     '<button id="enhBtn" class="sec-btn" aria-pressed="'+imgEnhanced+'" onclick="window._toggleEnhance()">'+ic('sparkle',14)+(imgEnhanced?' Revenir à l’image originale':' Améliorer le ticket')+'</button></div>'+
     '<div class="export-bar"><p id="exportFilename"></p>'+
-    (expressMode?'<button id="dlb" class="primary-btn" onclick="window._expressSave()">'+ic('bolt',16)+' Sauvegarder express</button><button class="sec-btn" onclick="window._normalMode()">Passer en mode normal</button>':'<button id="dlb" class="primary-btn" onclick="window._gen()">'+ic('save',16)+' Sauvegarder l’image</button><button id="dlbpdf" class="sec-btn" onclick="window._genPDF()">'+ic('pdf',16)+' Exporter en PDF</button>')+'</div>';
+    '<button id="dlb" class="primary-btn" onclick="window._gen()">'+ic('save',16)+' Exporter l’image</button><button id="dlbpdf" class="sec-btn" onclick="window._genPDF()">'+ic('pdf',16)+' Exporter en PDF</button></div>';
   setupDragAndPinch();
   stampFontReady().then(function(){if(scr==='edit')updateStampOverlay()});
 }
@@ -554,24 +517,78 @@ async function resizeImage(source){
   var context=canvas.getContext('2d');context.fillStyle='#fff';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(image,0,0,canvas.width,canvas.height);
   return canvas.toDataURL('image/jpeg',.94);
 }
-function beginTicket(source,express){
-  clearTimeout(expressReturnTimer);if(ticket)ticket.cancel();ReceiptOCR.cancel();
-  ticket=new Receipt.Session(++ticketSequence,source,express);var current=ticket;
-  img=imgFull=source;imgOriginal=null;imgEnhanced=false;ndfDate='';expressMode=express;S.rotation=0;exportBusy=false;
-  crop={x1:5,y1:5,x2:95,y2:95};sp={x:50,y:75};stampCache=null;
-  scr=express?'edit':'crop';render();readTicketDate(current);
-  if(express){var revision=current.revision;findBestPosition(source,function(position){if(ticket!==current||current.cancelled||current.revision!==revision||scr!=='edit')return;sp=position;updateStampOverlay()})}
+function beginTicket(source,metadata){
+  if(ticket)ticket.cancel();ReceiptOCR.cancel();
+  ticket=new Receipt.Session(++ticketSequence,source);var current=ticket;
+  current.counterEvent=eventId();current.counted=false;
+  current.pdfText=metadata&&metadata.text||'';current.pdfPage=metadata&&metadata.page||0;
+  img=imgFull=source;imgOriginal=null;imgEnhanced=false;ndfDate='';S.rotation=0;exportBusy=false;
+  var inset=current.pdfPage?0:5;
+  crop={x1:inset,y1:inset,x2:100-inset,y2:100-inset};sp={x:50,y:75};stampCache=null;
+  scr='crop';render();readTicketDate(current);
 }
-function fileInput(capture,express){
-  var input=document.createElement('input');input.type='file';input.accept='image/*';if(capture)input.setAttribute('capture','environment');
+function closePDFImport(){
+  pdfPreviewSequence++;
+  var previous=pdfImport;pdfImport=null;
+  if(previous)void previous.document.destroy().catch(function(){});
+}
+function renderPDFPicker(el){
+  if(!pdfImport){scr='home';render();return}
+  var current=pdfImport,sequence=++pdfPreviewSequence,page=pdfPage;
+  el.innerHTML='<div class="hdr"><button class="glass-btn compact" onclick="window._go(\'home\')">← Retour</button><span class="htitle">Choisir une page</span></div>'+
+    '<div class="scr pdf-picker"><p class="pdf-name">'+esc(current.name)+'</p><div class="pdf-preview"><p id="pdfLoading" role="status">Ouverture de la page…</p><img id="pdfPreview" alt="Aperçu de la page '+page+'" hidden></div></div>'+
+    '<div class="export-bar"><div class="pdf-navigation"><button type="button" class="glass-btn compact" onclick="window._pdfPage('+Math.max(1,page-1)+')" aria-label="Page précédente" '+(page===1?'disabled':'')+'>←</button>'+
+    '<label for="pdfPageNumber">Page <input id="pdfPageNumber" type="number" inputmode="numeric" min="1" max="'+current.document.pages+'" value="'+page+'" onchange="window._pdfPage(this.value)"> sur '+current.document.pages+'</label>'+
+    '<button type="button" class="glass-btn compact" onclick="window._pdfPage('+Math.min(current.document.pages,page+1)+')" aria-label="Page suivante" '+(page===current.document.pages?'disabled':'')+'>→</button></div>'+
+    '<button type="button" id="pdfUse" class="primary-btn" disabled onclick="window._usePDFPage()">Utiliser cette page</button></div>';
+  current.document.renderPage(page,900).then(function(result){
+    if(pdfImport!==current||sequence!==pdfPreviewSequence||scr!=='pdf')return;
+    var preview=document.getElementById('pdfPreview');preview.src=result.image;preview.hidden=false;
+    document.getElementById('pdfLoading').hidden=true;document.getElementById('pdfUse').disabled=false;
+  }).catch(function(){if(pdfImport===current&&sequence===pdfPreviewSequence){document.getElementById('pdfLoading').textContent='Cette page est illisible. Essayez une autre page.'}});
+}
+window._pdfPage=function(value){
+  if(!pdfImport)return;
+  pdfPage=Math.max(1,Math.min(pdfImport.document.pages,Math.floor(Number(value)||1)));render();
+};
+window._usePDFPage=async function(){
+  if(!pdfImport||pdfImport.busy)return;
+  var current=pdfImport,page=pdfPage,request=++importSequence;
+  current.busy=true;document.getElementById('pdfUse').disabled=true;
+  document.querySelectorAll('.pdf-navigation button,.pdf-navigation input').forEach(function(control){control.disabled=true});
+  document.getElementById('pdfUse').textContent='Ouverture…';
+  try{
+    var result=await current.document.renderPage(page);
+    if(request!==importSequence||pdfImport!==current)return;
+    closePDFImport();beginTicket(result.image,result);
+  }catch(error){if(pdfImport===current){current.busy=false;toast('Impossible d’ouvrir cette page.');render()}}
+};
+function fileInput(capture){
+  var input=document.createElement('input');input.type='file';input.accept=capture?'image/*':'image/*,application/pdf,.pdf';if(capture)input.setAttribute('capture','environment');
   input.style.display='none';document.body.appendChild(input);
   input.addEventListener('cancel',function(){input.remove()},{once:true});
   input.addEventListener('change',async function(){
     var file=input.files&&input.files[0];input.remove();if(!file)return;
-    var request=++importSequence,source=URL.createObjectURL(file);toast('Ouverture du ticket…');
-    try{var resized=await resizeImage(source);if(request===importSequence)beginTicket(resized,!!express)}
+    var request=++importSequence,source=null,document=null;toast('Ouverture du ticket…');
+    try{
+      if(file.type==='application/pdf'||/\.pdf$/i.test(file.name)){
+        document=await ReceiptPDF.open(file);
+        if(request!==importSequence){await document.destroy();return}
+        if(document.pages===1){
+          var page=await document.renderPage(1);
+          await document.destroy();document=null;
+          if(request===importSequence)beginTicket(page.image,page);
+        }else{
+          if(ticket)ticket.cancel();ReceiptOCR.cancel();closePDFImport();
+          pdfImport={document:document,name:file.name};document=null;pdfPage=1;scr='pdf';render();
+        }
+      }else{
+        source=URL.createObjectURL(file);
+        var resized=await resizeImage(source);if(request===importSequence)beginTicket(resized);
+      }
+    }
     catch(error){if(request===importSequence)toast(error.message)}
-    finally{URL.revokeObjectURL(source)}
+    finally{if(source)URL.revokeObjectURL(source);if(document)void document.destroy().catch(function(){})}
   },{once:true});
   input.click();
 }
@@ -629,7 +646,6 @@ function createPDF(canvas){
 
     return new Blob([pdfBuf],{type:"application/pdf"});
 }
-var expressMode=false;
 function setExportBusy(busy){
   exportBusy=busy;document.querySelectorAll('#app button,#app input').forEach(function(el){el.disabled=busy});
 }
@@ -637,18 +653,20 @@ function downloadBlob(blob,name){
   var url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();setTimeout(function(){URL.revokeObjectURL(url)},10000);
 }
 async function saveBlob(blob,name){
-  var result=await ExportFile.deliver(blob,name,saveMethod,{navigator:navigator,File:File,download:downloadBlob});
+  var isMobile=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  var result=await ExportFile.deliver(blob,name,isMobile?'share':'download',{navigator:navigator,File:File,download:downloadBlob});
   return result==='cancelled'?null:result==='shared'?'Partagé ✓':'Téléchargement lancé ✓';
 }
 function postSaveActions(){
   var bar=document.querySelector('.export-bar');if(!bar||document.getElementById('postSaveWrap'))return;
   var wrap=document.createElement('div');wrap.id='postSaveWrap';wrap.innerHTML='<button class="sec-btn" onclick="window._go(\'home\')">Accueil</button><button class="primary-btn" onclick="window._cam()">Nouvelle photo</button>';bar.appendChild(wrap);
 }
-async function exportDocument(format,express){
+async function exportDocument(format){
   if(exportBusy||!ticket||!img)return;
   if(ticket.ocrStatus==="reading"&&ticket.dateSource!=="manual"){toast('Lecture en cours. Attendez ou saisissez la date.');document.getElementById('ndfDateIn').focus();return}
   if(!Receipt.validDate(ticket.date)){toast('Vérifiez la date du ticket avant de sauvegarder');document.getElementById('ndfDateIn').focus();return}
   var current=ticket,source=img,name=Receipt.filename(ticket.date,format);
+  document.getElementById('exportFilename').textContent=name;
   setExportBusy(true);
   try{
     await stampFontReady();if(ticket!==current||current.cancelled)return;
@@ -660,31 +678,21 @@ async function exportDocument(format,express){
     var blob=format==='pdf'?createPDF(canvas):await new Promise(function(resolve,reject){canvas.toBlob(function(value){if(value)resolve(value);else reject(new Error('Export impossible'))},'image/png')});
     var result=await saveBlob(blob,name);
     if(!result){toast('Partage annulé');return}
-    incCount();if(navigator.vibrate)navigator.vibrate([20,50,20]);showSuccess();toast(result);
-    if(express){expressReturnTimer=setTimeout(function(){if(ticket===current&&scr==='edit'){expressMode=false;scr='home';render()}},1600)}
-    else postSaveActions();
+    incCount(current);if(navigator.vibrate)navigator.vibrate([20,50,20]);showSuccess();toast(result);
+    postSaveActions();
   }catch(error){toast('Sauvegarde impossible. Réessayez.');console.error('Export:',error)}
   finally{setExportBusy(false)}
 }
-window._gen=function(){return exportDocument('png',false)};
-window._genPDF=function(){return exportDocument('pdf',false)};
-window._express=function(){fileInput(true,true)};
-window._expressSave=function(){return exportDocument('png',true)};
-window._normalMode=function(){expressMode=false;if(ticket)ticket.express=false;render()};
+window._gen=function(){return exportDocument('png')};
+window._genPDF=function(){return exportDocument('pdf')};
 
 // ── GLOBALS ──
 window._go=function(s){
-  clearTimeout(expressReturnTimer);
-  if(s==='home'){importSequence++;if(ticket)ticket.cancel();ReceiptOCR.cancel();expressMode=false;}
+  if(s==='home'){importSequence++;if(ticket)ticket.cancel();ReceiptOCR.cancel();closePDFImport();}
   scr=s;render();
 };
 window._cam=function(){fileInput(true)};
 window._gal=function(){fileInput(false)};
-window._showComplet=function(){
-  var el=document.getElementById("completChoice");
-  if(el)el.style.display=el.style.display==="none"?"block":"none";
-};
-window._setSaveMethod=function(m){saveMethod=m;try{localStorage.setItem("ndf_savemethod",m)}catch(e){}render()};
 
 // Toggle image enhancement (contrast + brightness + sharpness)
 window._toggleEnhance=async function(){
@@ -730,7 +738,7 @@ window._rotate90=async function(){
     // Rotation changes framing only. Keep reading the original photo so that a
     // quarter-turn cannot replace a correctly read date with a sideways OCR result.
     imgFull=canvas.toDataURL('image/png');current.replaceImage(imgFull);img=imgFull;imgEnhanced=false;imgOriginal=null;
-    crop={x1:5,y1:5,x2:95,y2:95};scr='crop';render();toast('Rotation 90° ✓');
+    var inset=current.pdfPage?0:5;crop={x1:inset,y1:inset,x2:100-inset,y2:100-inset};scr='crop';render();toast('Rotation 90° ✓');
   }catch(error){toast('Rotation impossible. Image conservée.')}
 };
 
@@ -745,7 +753,14 @@ function showSuccess(){
 
 // A real same-origin service worker can cache the app and the local OCR engine.
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('./sw.js').catch(function(error){console.warn('Mode hors ligne indisponible:',error)});
+  var wasControlled=!!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange',function(){
+    if(!wasControlled){wasControlled=true;return}
+    if(scr==='home')location.reload();else pendingAppReload=true;
+  });
+  navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(function(registration){
+    document.addEventListener('visibilitychange',function(){if(!document.hidden){void registration.update();void counters.sync()}});
+  }).catch(function(error){console.warn('Mode hors ligne indisponible:',error)});
 }
 if(document.fonts)document.fonts.addEventListener('loadingdone',function(){stampCache=null;updateConfigPreview();updateStampOverlay()});
 

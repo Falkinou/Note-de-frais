@@ -1,0 +1,2 @@
+# Preserve upstream vendored files and licenses byte for byte.
+vendor/** -whitespace
